@@ -37,6 +37,7 @@
     "release:portable": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-releases.ps1 portable",
     "release:sea": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-releases.ps1 sea",
     "start": "node dist/server/index.js",
+    "smoke": "node scripts/smoke-test.mjs",
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {

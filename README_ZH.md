@@ -43,7 +43,7 @@ cd mCodex
 .\manage.bat
 ```
 
-`manage.bat` 会检查依赖、构建项目、以本地控制模式启动 Codex Desktop、启动 mCodex，并自动打开电脑端页面。
+`manage.bat` 会检查依赖、构建项目、以本地控制模式启动 Codex Desktop、启动 mCodex，并自动打开电脑端页面。mCodex 运行时，可执行 `npm run smoke` 对本地 Bridge 做只读端到端自检。
 
 ## 手机连接
 

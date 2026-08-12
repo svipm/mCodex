@@ -43,7 +43,7 @@ cd mCodex
 .\manage.bat
 ```
 
-`manage.bat` checks dependencies, builds the project, starts Codex Desktop with local control enabled, starts mCodex, and opens the local page.
+`manage.bat` checks dependencies, builds the project, starts Codex Desktop with local control enabled, starts mCodex, and opens the local page. With mCodex running, `npm run smoke` performs a read-only end-to-end check against the local Bridge.
 
 ## Connect your phone
 
