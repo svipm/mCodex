@@ -610,7 +610,7 @@ export class CodexCdpController {
     });
   }
 
-  async createTask(projectId: string | null, content: string, clientMessageId: string): Promise<{ threadId: string; acceptedAt: string; duplicate: boolean }> {
+  async createTask(projectId: string | null, content: string, clientMessageId: string, images: CodexImageInput[] = []): Promise<{ threadId: string; acceptedAt: string; duplicate: boolean }> {
     const existing = this.receipts.get(clientMessageId);
     if (existing) return { ...existing, duplicate: true };
     return this.runExclusive(async () => {
@@ -636,6 +636,7 @@ export class CodexCdpController {
       }
       const editor = page.locator('[contenteditable="true"][role="textbox"]').first();
       await editor.waitFor({ state: "visible", timeout: 8_000 });
+      await this.attachImages(page, images);
       await editor.fill(content);
       if (normalizeText(await editor.innerText()) !== normalizeText(content)) throw new Error("Composer content did not match the requested message");
       const action = page.locator(".composer-surface-chrome button.size-token-button-composer");
@@ -646,7 +647,7 @@ export class CodexCdpController {
       const deadline = Date.now() + 20_000;
       while (Date.now() < deadline) {
         const threadId = await this.currentThreadId(page);
-        if (threadId && threadId !== previousThreadId && await this.sessions.containsUserMessage(threadId, content, sentAt)) {
+        if (threadId && threadId !== previousThreadId && await this.sessions.containsUserMessage(threadId, content, sentAt, images.length > 0)) {
           const receipt = { threadId, acceptedAt: new Date().toISOString(), confirmed: true };
           this.receipts.set(clientMessageId, receipt);
           return { ...receipt, duplicate: false };

@@ -29,7 +29,7 @@ export interface BridgeCdp {
   decideApproval(threadId: string, decision: "approve" | "reject"): Promise<unknown>;
   listProjects(): Promise<unknown>;
   createProject(name: string, rootPath: string): Promise<unknown>;
-  createTask(projectId: string | null, content: string, clientMessageId: string): Promise<unknown>;
+  createTask(projectId: string | null, content: string, clientMessageId: string, images: CodexImageInput[]): Promise<unknown>;
 }
 
 export interface BridgeWatcher {
@@ -321,9 +321,10 @@ export async function createBridge(options: BridgeOptions = {}) {
       const content = typeof req.body?.content === "string" ? req.body.content.trim() : "";
       const projectId = typeof req.body?.projectId === "string" && req.body.projectId.trim() ? req.body.projectId.trim() : null;
       const clientMessageId = typeof req.body?.clientMessageId === "string" ? req.body.clientMessageId : "";
-      if (!content || content.length > 100_000) return void res.status(400).json({ error: "Content must contain 1 to 100000 characters" });
+      const images = parseImageInputs(req.body?.images);
+      if ((!content && !images.length) || content.length > 100_000) return void res.status(400).json({ error: "A message or image is required, and text must not exceed 100000 characters" });
       if (!/^[0-9a-f-]{36}$/i.test(clientMessageId)) return void res.status(400).json({ error: "A UUID clientMessageId is required" });
-      res.json(await cdp.createTask(projectId, content, clientMessageId));
+      res.json(await cdp.createTask(projectId, content, clientMessageId, images));
     } catch (error) { next(error); }
   });
 

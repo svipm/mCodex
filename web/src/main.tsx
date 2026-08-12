@@ -793,13 +793,13 @@ function App() {
   }
 
   async function createTaskFromComposer() {
-    if (!draft.trim() || sending || !cdpReady) return;
+    if ((!draft.trim() && !pendingImages.length) || sending || !cdpReady) return;
     setSending(true);
     setError("");
     try {
       const result = await api<{ threadId: string }>("/api/tasks", {
         method: "POST",
-        body: JSON.stringify({ projectId: newTaskProjectId || null, content: draft.trim(), clientMessageId: createClientMessageId() }),
+        body: JSON.stringify({ projectId: newTaskProjectId || null, content: draft.trim(), images: await Promise.all(pendingImages.map(imagePayload)), clientMessageId: createClientMessageId() }),
       });
       setDraft("");
       clearImages();
@@ -1003,8 +1003,9 @@ function App() {
           </select>
           <div className="empty-composer-row">
             <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void createTaskFromComposer(); } }} placeholder={t("输入要交给 Codex 的任务")} disabled={!cdpReady || sending || switchingThread} />
-            <button className="send-button" onClick={() => void createTaskFromComposer()} disabled={!cdpReady || sending || switchingThread || !draft.trim()} title={t("发送")}><Send size={19} /></button>
+            <button className="send-button" onClick={() => void createTaskFromComposer()} disabled={!cdpReady || sending || switchingThread || (!draft.trim() && pendingImages.length === 0)} title={t("发送")}><Send size={19} /></button>
           </div>
+          {pendingImages.length > 0 && <div className="pending-images">{pendingImages.map((image) => <div className="pending-image" key={image.id}><img src={image.preview} alt={image.file.name} /><button type="button" onClick={() => removeImage(image.id)} title={t("移除 {name}", { name: image.file.name })} disabled={sending}><X size={14} /></button></div>)}</div>}
           <div className="empty-composer-actions">
             <button className="attach-button" type="button" onClick={() => imageInputRef.current?.click()} disabled={!cdpReady || sending || pendingImages.length >= 4} title={t("添加图片")}><ImagePlus size={16} /><span>{t("添加")}</span></button>
             <input ref={imageInputRef} className="image-file-input" type="file" accept="image/avif,image/gif,image/jpeg,image/png,image/webp" multiple onChange={(event) => { addImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />

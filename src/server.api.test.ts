@@ -338,7 +338,7 @@ describe("createBridge API integration", () => {
       body: JSON.stringify({ content: "do it", clientMessageId }),
     });
     expect(valid.status).toBe(200);
-    expect(cdp.createTask).toHaveBeenCalledWith(null, "do it", clientMessageId);
+    expect(cdp.createTask).toHaveBeenCalledWith(null, "do it", clientMessageId, []);
   });
 
   it("serves projects and creates them after validation", async () => {
@@ -366,6 +366,32 @@ describe("createBridge API integration", () => {
     });
     expect(valid.status).toBe(200);
     expect(cdp.createProject).toHaveBeenCalledWith("Demo", path.resolve(codexHome));
+  });
+
+  it("creates tasks with parsed image attachments", async () => {
+    const codexHome = await mkdtemp(path.join(os.tmpdir(), "mcodex-bridge-task-image-"));
+    tempRoots.push(codexHome);
+    const clientMessageId = "11111111-1111-4111-8111-111111111111";
+    const cdp = fakeCdp();
+    const baseUrl = await startBridge(new SessionStore(codexHome), cdp);
+
+    const response = await fetch(`${baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        content: "with image",
+        clientMessageId,
+        images: [{ name: "pixel.png", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" }],
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(cdp.createTask).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(cdp.createTask).mock.calls[0];
+    expect(args[0]).toBeNull();
+    expect(args[1]).toBe("with image");
+    expect(args[2]).toBe(clientMessageId);
+    expect(args[3]).toHaveLength(1);
+    expect(args[3][0]).toMatchObject({ name: "pixel.png", mimeType: "image/png" });
   });
 
   it("requires the bridge token for API and WebSocket access", async () => {
