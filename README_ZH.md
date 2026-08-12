@@ -126,6 +126,7 @@ cd mCodex
 | 手机打不开页面 | 同一网络下检查 `3210` 端口；远程使用时检查组网或内网穿透配置 |
 | 配对码失效 | 重启 mCodex 获取新的配对码 |
 | 启动失败 | 源码版或便携版可运行 `manage.bat logs` 查看日志 |
+| push 后 CI 没有自动运行 | 当前仓库是 fork，可手动触发：`gh workflow run CI --repo svipm/mCodex --ref main` |
 
 ## 友情链接
 

@@ -12,6 +12,7 @@
 - 对话步骤编号
 - `npm run smoke` 只读端到端冒烟测试
 - SEA 打包后自动执行 `--self-test` 验证资源释放
+- README 补充 fork 仓库手动触发 CI 的说明
 
 ### Changed
 

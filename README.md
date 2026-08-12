@@ -126,6 +126,7 @@ See [SECURITY.md](SECURITY.md) for the full security policy.
 | Phone cannot open the page | On the same network, check port `3210`; remotely, check the tunneling or private-network configuration |
 | Pairing code expired | Restart mCodex to generate a new code |
 | Startup failed | For source/portable installs, run `manage.bat logs` |
+| CI did not run after a push | The current repository is a fork; trigger it manually with `gh workflow run CI --repo svipm/mCodex --ref main` |
 
 ## Friends
 
