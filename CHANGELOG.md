@@ -14,6 +14,7 @@
 - SEA 打包后自动执行 `--self-test` 验证资源释放
 - README 补充 fork 仓库手动触发 CI 的说明
 - 新增发布检查清单 `docs/RELEASING.md` 与 `npm run check`
+- 修复空状态新建任务 Composer 尺寸过窄的问题
 
 ### Changed
 
