@@ -12,6 +12,8 @@ export interface CdpStatus {
   stopReady: boolean;
   approval: ApprovalRequest | null;
   permissions: CodexPermissionState;
+  mode: DesktopMode | null;
+  reasoningEffort: ReasoningEffort | null;
   error?: string;
 }
 
@@ -28,6 +30,9 @@ export interface StreamingCandidate {
 export type CodexPermissionMode = "ask" | "auto" | "full-access";
 
 export type FollowUpMode = "queue" | "steer" | "interrupt";
+
+export type DesktopMode = "codex" | "chatgpt-work";
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 export interface CodexImageInput {
   name: string;
@@ -62,6 +67,21 @@ export function isCodexPermissionMode(value: unknown): value is CodexPermissionM
 
 export function isFollowUpMode(value: unknown): value is FollowUpMode {
   return value === "queue" || value === "steer" || value === "interrupt";
+}
+
+export function isDesktopMode(value: unknown): value is DesktopMode {
+  return value === "codex" || value === "chatgpt-work";
+}
+
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return value === "low" || value === "medium" || value === "high" || value === "xhigh";
+}
+
+function reasoningEffortLabel(effort: ReasoningEffort): string {
+  if (effort === "low") return "轻度";
+  if (effort === "high") return "高";
+  if (effort === "xhigh") return "极高";
+  return "中";
 }
 
 export function shouldUseAlternateFollowUpShortcut(configuredMode: unknown, requestedMode: "queue" | "steer"): boolean {
@@ -194,7 +214,7 @@ export class CodexCdpController {
   private async readStatus(): Promise<CdpStatus> {
     try {
       const page = await this.mainPage();
-      const [currentThreadId, stopReady, runningRows, editorReady, approval, permissions] = await Promise.all([
+      const [currentThreadId, stopReady, runningRows, editorReady, approval, permissions, mode, reasoningEffort] = await Promise.all([
         this.currentThreadId(page),
         this.stopButton(page).count().then((count) => count > 0),
         page.evaluate(() => Array.from(document.querySelectorAll("[data-app-action-sidebar-thread-id]"))
@@ -207,6 +227,8 @@ export class CodexCdpController {
         page.locator('[contenteditable="true"][role="textbox"]').count().then((count) => count === 1),
         this.detectDesktopApproval(page),
         this.permissionStateFromPage(page),
+        this.desktopModeFromPage(page),
+        this.reasoningEffortFromPage(page),
       ]);
       const threads = runningRows.some((row) => row.id.startsWith("client-new-thread:"))
         ? await this.sessions.listThreads()
@@ -225,6 +247,8 @@ export class CodexCdpController {
         stopReady,
         approval,
         permissions,
+        mode,
+        reasoningEffort,
       };
     } catch (error) {
       return {
@@ -235,6 +259,8 @@ export class CodexCdpController {
         stopReady: false,
         approval: null,
         permissions: { mode: null, label: null, available: false },
+        mode: null,
+        reasoningEffort: null,
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -331,14 +357,16 @@ export class CodexCdpController {
       if (!bridge?.sendMessageFromView) throw new Error("Codex desktop bridge is unavailable");
       const requestId = crypto.randomUUID();
       return await new Promise<T>((resolve, reject) => {
-        const cleanup = () => {
-          clearTimeout(timeout);
-          window.removeEventListener("message", onMessage);
-        };
-        const onMessage = (event: MessageEvent) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => {
+          controller.abort();
+          reject(new Error("Codex desktop request timed out"));
+        }, 8_000);
+        window.addEventListener("message", (event: MessageEvent) => {
           const message = event.data;
           if (message?.type !== "fetch-response" || message.requestId !== requestId) return;
-          cleanup();
+          clearTimeout(timeout);
+          controller.abort();
           if (message.responseType !== "success" || message.status < 200 || message.status >= 300) {
             reject(new Error(message.error ?? message.bodyJsonString ?? `Host request failed (${message.status})`));
             return;
@@ -349,12 +377,7 @@ export class CodexCdpController {
           } catch (error) {
             reject(error);
           }
-        };
-        const timeout = setTimeout(() => {
-          cleanup();
-          reject(new Error("Codex desktop request timed out"));
-        }, 8_000);
-        window.addEventListener("message", onMessage);
+        }, { signal: controller.signal });
         bridge.sendMessageFromView({
           type: "fetch",
           requestId,
@@ -362,7 +385,8 @@ export class CodexCdpController {
           url: `vscode://codex/${hostCommand}`,
           body: JSON.stringify(hostParams),
         }).catch((error: unknown) => {
-          cleanup();
+          clearTimeout(timeout);
+          controller.abort();
           reject(error);
         });
       });
@@ -388,6 +412,77 @@ export class CodexCdpController {
     if (await trigger.count() !== 1) return { mode: null, label: null, available: false };
     const label = (await trigger.innerText().catch(() => "")).replace(/\s+/g, " ").trim() || null;
     return { mode: permissionModeFromLabel(label), label, available: true };
+  }
+
+  private desktopModeTrigger(page: Page) {
+    return page.locator('button[aria-label^="切换模式"]:visible').first();
+  }
+
+  private async desktopModeFromPage(page: Page): Promise<DesktopMode | null> {
+    const trigger = this.desktopModeTrigger(page);
+    if (await trigger.count() !== 1) return null;
+    const label = (await trigger.getAttribute("aria-label")) ?? "";
+    if (/chatgpt work/i.test(label)) return "chatgpt-work";
+    if (/codex/i.test(label)) return "codex";
+    return null;
+  }
+
+  private reasoningTrigger(page: Page) {
+    return page.locator('[data-composer-navigation-target="reasoning"]:visible').first();
+  }
+
+  private async reasoningEffortFromPage(page: Page): Promise<ReasoningEffort | null> {
+    const trigger = this.reasoningTrigger(page);
+    if (await trigger.count() !== 1) return null;
+    const effort = await trigger.getAttribute("data-selected-reasoning-effort");
+    return isReasoningEffort(effort) ? effort : null;
+  }
+
+  async setDesktopMode(mode: DesktopMode): Promise<{ mode: DesktopMode | null }> {
+    return this.runExclusive(async () => {
+      const page = await this.mainPage();
+      const trigger = this.desktopModeTrigger(page);
+      if (await trigger.count() !== 1) throw new Error("Codex mode switch is unavailable");
+      if (await this.desktopModeFromPage(page) === mode) return { mode };
+
+      await trigger.click();
+      const option = page.getByRole("menuitem", { name: mode === "codex" ? /^Codex\b/i : /^ChatGPT Work\b/i }).first();
+      await option.waitFor({ state: "visible", timeout: 3_000 });
+      await option.click();
+
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const updated = await this.desktopModeFromPage(page);
+        if (updated === mode) return { mode: updated };
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error("Codex mode did not change to the requested value");
+    });
+  }
+
+  async setReasoningEffort(effort: ReasoningEffort): Promise<{ effort: ReasoningEffort | null; label: string }> {
+    return this.runExclusive(async () => {
+      const page = await this.mainPage();
+      const trigger = this.reasoningTrigger(page);
+      if (await trigger.count() !== 1) throw new Error("Codex reasoning control is unavailable");
+      const current = await trigger.getAttribute("data-selected-reasoning-effort");
+      const label = reasoningEffortLabel(effort);
+      if (current === effort) return { effort: current as ReasoningEffort, label };
+
+      await trigger.click();
+      const submenu = page.getByRole("menuitem", { name: /推理强度|Reasoning effort/i }).first();
+      await submenu.waitFor({ state: "visible", timeout: 3_000 });
+      await submenu.click();
+
+      const option = page.getByRole("menuitem", { name: label, exact: true }).last();
+      await option.waitFor({ state: "visible", timeout: 3_000 });
+      await option.click();
+      await page.keyboard.press("Escape").catch(() => undefined);
+
+      const updated = await trigger.getAttribute("data-selected-reasoning-effort");
+      if (!isReasoningEffort(updated) || updated !== effort) throw new Error("Codex reasoning effort did not change to the requested value");
+      return { effort: updated, label };
+    });
   }
 
   async setPermissionMode(mode: CodexPermissionMode): Promise<CodexPermissionState> {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractImages, extractText, extractUserText, inferStatus, isVisibleTimelineItem, rollbackTurnsFromRecord, statusFromEvent, timelineFromRecord, timelineFromRecords } from "./parser.js";
+import { extractImages, extractSources, extractText, extractTokenUsage, extractUserText, inferStatus, isVisibleTimelineItem, rollbackTurnsFromRecord, statusFromEvent, timelineFromRecord, timelineFromRecords } from "./parser.js";
 import { normalizeText } from "./store.js";
 
 describe("session parser", () => {
@@ -144,5 +144,49 @@ describe("session parser", () => {
     ];
 
     expect(timelineFromRecords(records, "thread")).toEqual([]);
+  });
+
+  it("extracts unique source URLs from assistant messages only", () => {
+    const records = [
+      { offset: 0, record: { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "https://user.example.com/ignored" }] } } },
+      { offset: 10, record: { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "See https://example.com/a and https://example.com/a (again)." }] } } },
+      { offset: 20, record: { type: "event_msg", payload: { type: "token_count" } } },
+      { offset: 30, record: { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Details: https://example.com/b?q=1&x=2" }] } } },
+    ];
+
+    expect(extractSources(records)).toEqual(["https://example.com/a", "https://example.com/b?q=1&x=2"]);
+  });
+
+  it("caps source extraction at 20 unique URLs", () => {
+    const records = Array.from({ length: 25 }, (_, index) => ({
+      offset: index,
+      record: { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `https://example.com/item/${index}` }] } },
+    }));
+
+    const sources = extractSources(records);
+    expect(sources).toHaveLength(20);
+    expect(new Set(sources).size).toBe(20);
+  });
+
+  it("extracts the latest token usage event with camel and snake case", () => {
+    const records = [
+      { offset: 0, record: { type: "event_msg", payload: { type: "token_count", input_tokens: 100, output_tokens: 20, cached_tokens: 30, total_tokens: 150, model_name: "gpt-5", cost_usd: 0.05 } } },
+      { offset: 10, record: { type: "event_msg", payload: { type: "token_count", inputTokens: 200, outputTokens: 40, cacheTokens: 60, totalTokens: 300, model: "gpt-5.2", cost: 0.1 } } },
+    ];
+
+    expect(extractTokenUsage(records)).toEqual({
+      inputTokens: 200,
+      outputTokens: 40,
+      cacheTokens: 60,
+      cacheHitRate: 0.2,
+      totalTokens: 300,
+      cost: 0.1,
+      model: "gpt-5.2",
+    });
+  });
+
+  it("returns null when no token usage event exists", () => {
+    expect(extractTokenUsage([])).toBeNull();
+    expect(extractTokenUsage([{ offset: 0, record: { type: "event_msg", payload: { type: "agent_reasoning" } } }])).toBeNull();
   });
 });

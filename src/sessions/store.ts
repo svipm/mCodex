@@ -2,8 +2,9 @@ import { createReadStream } from "node:fs";
 import { open, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
-import type { ApprovalRequest, ThreadSummary, TimelineItem } from "../types.js";
-import { extractImages, extractText, extractUserText, inferStatus, parseJsonLine, timelineFromRecords } from "./parser.js";
+import type { ApprovalRequest, EnvironmentInfo, ThreadSummary, TimelineItem } from "../types.js";
+import { getGitStatus } from "../fs/git-status.js";
+import { extractImages, extractSources, extractText, extractTokenUsage, extractUserText, inferStatus, parseJsonLine, timelineFromRecords } from "./parser.js";
 
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 type ParsedRecord = { record: Record<string, any>; offset: number };
@@ -96,6 +97,7 @@ export class SessionStore {
   private readonly indexPath: string;
   private filesById = new Map<string, string>();
   private titlesById = new Map<string, string>();
+  private envCache = new Map<string, { info: EnvironmentInfo | null; fileKey: string; expiresAt: number }>();
 
   constructor(private readonly codexHome: string) {
     this.sessionsRoot = path.join(codexHome, "sessions");
@@ -213,6 +215,27 @@ export class SessionStore {
     if (!filePath) return [];
     const records = await readRecords(filePath);
     return approvalRequestsFromRecords(records, threadId);
+  }
+
+  async getEnvironmentInfo(threadId: string): Promise<EnvironmentInfo | null> {
+    const filePath = await this.getThreadFile(threadId);
+    if (!filePath) return null;
+    const fileStat = await stat(filePath).catch(() => null);
+    const fileKey = fileStat ? `${fileStat.mtimeMs}:${fileStat.size}` : "";
+    const now = Date.now();
+    const cached = this.envCache.get(threadId);
+    if (cached && cached.fileKey === fileKey && cached.expiresAt > now) return cached.info;
+    const records = await readRecords(filePath);
+    const meta = records.find(({ record }) => record.type === "session_meta")?.record.payload ?? {};
+    const cwd = typeof meta.cwd === "string" ? meta.cwd : null;
+    const [git, tokenUsage, sources] = await Promise.all([
+      getGitStatus(cwd),
+      Promise.resolve(extractTokenUsage(records)),
+      Promise.resolve(extractSources(records)),
+    ]);
+    const info: EnvironmentInfo = { git, tokenUsage, sources };
+    this.envCache.set(threadId, { info, fileKey, expiresAt: Date.now() + 10_000 });
+    return info;
   }
 }
 

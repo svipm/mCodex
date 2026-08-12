@@ -15,7 +15,7 @@ Codex Desktop 留在电脑上，随时用手机查看进度、追加指令和处
 </div>
 
 > [!NOTE]
-> mCodex 是非官方社区项目。电脑端目前仅支持 Windows 10/11，并要求安装且登录 Microsoft Store 版 Codex Desktop。
+> mCodex 是非官方社区项目。电脑端目前支持 Windows 10/11，并要求安装且登录 Microsoft Store 版 Codex Desktop 或 Codex++。
 
 https://github.com/user-attachments/assets/a5a2ce4b-d82e-484e-8de3-d4ceade51807
 
@@ -59,14 +59,29 @@ cd mCodex
 
 需要在外网使用时，可以搭配 Tailscale、frp、花生壳等组网或内网穿透工具，再用手机打开工具提供的访问地址。只允许转发 mCodex 的 `3210` 端口，任何情况下都不要暴露 Codex 控制端口 `9222`。
 
+## 配置
+
+从源码或便携版运行时，mCodex 会读取以下环境变量。它不会自动加载 `.env`；请先在当前终端或启动器中设置。
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `BRIDGE_HOST` | `127.0.0.1` | Bridge 绑定的地址；手机需要同一局域网访问时设为 `0.0.0.0`。 |
+| `BRIDGE_PORT` | `3210` | 网页和 API 端口。 |
+| `BRIDGE_TOKEN` | 自动生成 | 局域网模式的设备信任 Token；外网模式请使用至少 24 个字符的随机值。 |
+| `BRIDGE_TOKEN_FILE` | `%USERPROFILE%\.codex\remote-bridge-token` | 自动生成的设备信任 Token 保存位置。 |
+| `CODEX_HOME` | `%USERPROFILE%\.codex` | Codex Desktop 会话数据目录。 |
+| `CODEX_CDP_URL` | `http://localhost:9222` | Codex 控制端口；启动脚本通常会自动发现真实地址。 |
+| `MCODEX_LOCALE` | 跟随系统 | 强制使用 `zh-CN` 或 `en-US` 输出。 |
+
 ## 可以做什么
 
 - 按项目浏览任务并跟进实时输出
 - 发送消息、后续指令和图片
 - 停止任务并处理审批请求
-- 查看修改文件及代码增删行数
+- 查看修改文件、Git 状态、Token 用量和引用来源
+- 置顶重要任务
 - 创建项目和新任务
-- 切换 Codex Desktop 权限模式
+- 切换 Codex Desktop 权限模式、Codex / ChatGPT Work 模式和推理强度
 
 ## 为什么需要 mCodex？
 

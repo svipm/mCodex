@@ -15,7 +15,7 @@ Leave Codex Desktop running on your PC, and use your phone to check progress, se
 </div>
 
 > [!NOTE]
-> mCodex is an unofficial community project. The PC host currently supports only Windows 10/11 with the Microsoft Store version of Codex Desktop installed and signed in.
+> mCodex is an unofficial community project. The PC host currently supports Windows 10/11 with the Microsoft Store version of Codex Desktop or Codex++ installed and signed in.
 
 https://github.com/user-attachments/assets/a5a2ce4b-d82e-484e-8de3-d4ceade51807
 
@@ -59,14 +59,29 @@ The pairing code is valid for 10 minutes. After pairing, the device stays truste
 
 To use mCodex away from home, connect it through a private-network or tunneling tool such as Tailscale, frp, or PeanutHull, then open the resulting address on your phone. Only publish the mCodex service on port `3210`; never expose the Codex control port `9222`.
 
+## Configuration
+
+When running from source or the portable release, mCodex reads these environment variables. It does not load `.env` automatically; set them in the current shell or launcher before starting.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BRIDGE_HOST` | `127.0.0.1` | Address the Bridge binds to. Use `0.0.0.0` for phone access on the same LAN. |
+| `BRIDGE_PORT` | `3210` | Web UI and API port. |
+| `BRIDGE_TOKEN` | generated | Device-trust token for LAN mode. Use a random 24+ character value in external mode. |
+| `BRIDGE_TOKEN_FILE` | `%USERPROFILE%\.codex\remote-bridge-token` | Where a generated device-trust token is persisted. |
+| `CODEX_HOME` | `%USERPROFILE%\.codex` | Codex Desktop session data directory. |
+| `CODEX_CDP_URL` | `http://localhost:9222` | Codex control endpoint. The launcher normally discovers the real URL automatically. |
+| `MCODEX_LOCALE` | system | Force `zh-CN` or `en-US` output. |
+
 ## What you can do
 
 - Browse projects and follow live task output
 - Send messages, follow-ups, and images
 - Stop tasks and handle approval requests
-- Inspect changed files and line counts
+- Inspect changed files, Git state, token usage, and cited sources
+- Pin important tasks
 - Create projects and start new tasks
-- Switch Codex Desktop permission modes
+- Switch Codex Desktop permission modes, Codex / ChatGPT Work mode, and reasoning effort
 
 ## Why mCodex?
 

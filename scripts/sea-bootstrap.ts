@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { getAsset, isSea } from "node:sea";
@@ -37,6 +37,16 @@ function extractAssets(): { scriptPath: string; webRoot: string } {
   return { scriptPath, webRoot };
 }
 
+function readCdpUrl(): string {
+  try {
+    const value = readFileSync(path.join(tmpdir(), "mcodex-cdp-url"), "utf8").trim();
+    if (/^https?:\/\/127\.0\.0\.1:\d+$/.test(value)) return value;
+  } catch {
+    // The launcher writes this file after Codex Desktop or Codex++ is online.
+  }
+  return "http://localhost:9222";
+}
+
 async function waitForUrl(url: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -58,7 +68,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log(T("正在启动 Codex Desktop（本地控制通道）...", "Starting Codex Desktop (local control channel)..."));
+  console.log(T("正在启动 Codex Desktop/Codex++（本地控制通道）...", "Starting Codex Desktop/Codex++ (local control channel)..."));
   const cdp = spawnSync("powershell.exe", [
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
@@ -66,9 +76,11 @@ async function main(): Promise<void> {
   ], { stdio: "inherit" });
   if (cdp.status !== 0) process.exit(cdp.status ?? 1);
 
+  const cdpUrl = readCdpUrl();
+  process.env.CODEX_CDP_URL ??= cdpUrl;
   console.log(T("Codex 已启动，正在等待控制通道就绪（最多 120 秒）...", "Codex started. Waiting for the control channel (up to 120 seconds)..."));
-  if (!(await waitForUrl("http://localhost:9222/json/version", 120_000))) {
-    throw new Error(T("Codex 控制通道在 120 秒内没有就绪。请完全退出 Codex Desktop 后重新运行。 ", "Codex control channel did not become ready within 120 seconds. Fully quit Codex Desktop and run it again."));
+  if (!(await waitForUrl(`${cdpUrl}/json/version`, 120_000))) {
+    throw new Error(T("Codex 控制通道在 120 秒内没有就绪。请确认 Codex Desktop 或 Codex++ 已登录后重新运行。 ", "Codex control channel did not become ready within 120 seconds. Make sure Codex Desktop or Codex++ is signed in and run it again."));
   }
 
   process.env.BRIDGE_WEB_ROOT = webRoot;

@@ -1,5 +1,22 @@
 # 更新记录
 
+## [Unreleased]
+
+### Added
+
+- 支持 Codex++（增强版 Codex Desktop），自动发现随机 CDP 控制端口
+- 手机端切换 Codex / ChatGPT Work 模式和推理强度
+- 任务环境面板：Git 分支与变更、Token 用量、引用来源
+- 置顶任务、桌面风格导航和顶栏菜单
+- 空状态直接选择项目并新建任务
+- 对话步骤编号
+
+### Changed
+
+- 环境信息按会话文件变化缓存，降低 Git 轮询开销
+- 启动脚本可自动定位 ChatGPT.exe 的随机调试端口
+- Bridge 支持依赖注入，新增 HTTP API 与 WebSocket 集成测试
+
 ## [0.1.0] - 2026-08-07
 
 ### Added

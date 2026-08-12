@@ -1,4 +1,4 @@
-import type { ThreadStatus, TimelineItem } from "../types.js";
+import type { ThreadStatus, TimelineItem, TokenUsage } from "../types.js";
 
 type JsonObject = Record<string, any>;
 
@@ -214,6 +214,47 @@ export function timelineFromRecord(record: JsonObject, threadId: string, offset:
 
 export function isVisibleTimelineItem(item: TimelineItem): boolean {
   return item.kind === "message" || item.kind === "reasoning" || item.kind === "tool_call";
+}
+
+const URL_PATTERN = /https?:\/\/(?:[a-zA-Z0-9\-_.]+)(?:\/[^\s<>"'\]]*)?/gi;
+const MAX_SOURCES = 20;
+
+export function extractSources(records: Array<{ record: JsonObject; offset: number }>): string[] {
+  const found = new Set<string>();
+  for (const { record } of records) {
+    if (record.type !== "response_item") continue;
+    const payload = record.payload ?? {};
+    if (payload.type !== "message" || payload.role !== "assistant") continue;
+    const text = extractText(payload.content);
+    if (!text) continue;
+    const matches = text.matchAll(URL_PATTERN);
+    for (const match of matches) {
+      const url = match[0].replace(/[.,;:!?)]+$/, "");
+      if (url.length > 10 && !found.has(url)) found.add(url);
+      if (found.size >= MAX_SOURCES) break;
+    }
+    if (found.size >= MAX_SOURCES) break;
+  }
+  return [...found];
+}
+
+export function extractTokenUsage(records: Array<{ record: JsonObject; offset: number }>): TokenUsage | null {
+  let latest: JsonObject | null = null;
+  for (const { record } of records) {
+    if (record.type !== "event_msg") continue;
+    const payload = record.payload ?? {};
+    if (payload.type !== "token_count") continue;
+    latest = payload;
+  }
+  if (!latest) return null;
+  const inputTokens = Number(latest.input_tokens ?? latest.inputTokens ?? 0) || 0;
+  const outputTokens = Number(latest.output_tokens ?? latest.outputTokens ?? 0) || 0;
+  const cacheTokens = Number(latest.cached_tokens ?? latest.cache_tokens ?? latest.cacheTokens ?? 0) || 0;
+  const totalTokens = Number(latest.total_tokens ?? latest.totalTokens ?? (inputTokens + outputTokens + cacheTokens)) || 0;
+  const cacheHitRate = totalTokens > 0 ? cacheTokens / totalTokens : 0;
+  const cost = typeof latest.cost === "number" ? latest.cost : typeof latest.cost_usd === "number" ? latest.cost_usd : null;
+  const model = typeof latest.model === "string" ? latest.model : typeof latest.model_name === "string" ? latest.model_name : null;
+  return { inputTokens, outputTokens, cacheTokens, cacheHitRate, totalTokens, cost, model };
 }
 
 export function inferStatus(records: JsonObject[]): ThreadStatus {

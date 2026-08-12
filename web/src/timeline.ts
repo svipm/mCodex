@@ -23,7 +23,7 @@ export interface TimelineDisplaySource extends RollbackItem {
 }
 
 export type DesktopDisplayItem<T extends TimelineDisplaySource = TimelineDisplaySource> =
-  | { type: "message" | "reasoning"; item: T }
+  | { type: "message" | "reasoning"; item: T; step?: number }
   | { type: "commands"; id: string; count: number }
   | { type: "processing"; id: string; commentary: T[]; reasoning: T | null; commandCount: number }
   | { type: "file_change"; id: string; fileCount: number; additions: number; deletions: number; files: TimelineActivityFile[] };
@@ -77,6 +77,7 @@ function toolActivity<T extends TimelineDisplaySource>(items: T[]): { commands: 
 export function buildDesktopTimeline<T extends TimelineDisplaySource>(items: T[], cwd: string | null): DesktopDisplayItem<T>[] {
   const result: DesktopDisplayItem<T>[] = [];
   let turnItems: T[] = [];
+  let stepCount = 0;
 
   const flushTurn = () => {
     if (!turnItems.length) return;
@@ -134,7 +135,8 @@ export function buildDesktopTimeline<T extends TimelineDisplaySource>(items: T[]
   for (const item of items) {
     if (item.kind === "message" && item.role === "user") {
       flushTurn();
-      result.push({ type: "message", item });
+      stepCount += 1;
+      result.push({ type: "message", item, step: stepCount });
     } else {
       turnItems.push(item);
     }

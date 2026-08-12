@@ -5,6 +5,7 @@ dist/
 coverage/
 *.log
 .run-logs/
+.qoder/
 release/
 remote-bridge-token
 Thumbs.db

@@ -35,6 +35,7 @@ function T([string]$Chinese, [string]$English) {
 $script:NodeExe = $null
 $script:NpmCmd = $null
 $script:WingetCmd = $null
+$script:CdpUrl = $null
 
 function Write-Step([string]$Message) {
   Write-Host ""
@@ -142,18 +143,34 @@ function Ensure-Node {
   Write-Host "Node.js is ready: $((& $script:NodeExe --version).Trim())" -ForegroundColor Green
 }
 
+function Get-CodexPlusPlusPath {
+  $candidates = @(
+    (Join-Path $env:LOCALAPPDATA "Programs\Codex++\codex-plus-plus-manager.exe"),
+    (Join-Path ${env:ProgramFiles} "Codex++\codex-plus-plus-manager.exe"),
+    (Join-Path ${env:ProgramFiles(x86)} "Codex++\codex-plus-plus-manager.exe")
+  )
+  foreach ($candidate in $candidates) {
+    if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate }
+  }
+  return $null
+}
+
 function Test-CodexInstalled {
-  return [bool](Get-AppxPackage -Name "OpenAI.Codex" -ErrorAction SilentlyContinue)
+  if (Get-AppxPackage -Name "OpenAI.Codex" -ErrorAction SilentlyContinue) { return $true }
+  return [bool](Get-CodexPlusPlusPath)
 }
 
 function Ensure-Codex {
+  $codexPlusPlus = Get-CodexPlusPlusPath
+  if ($codexPlusPlus) {
+    Write-Host "Codex++ (增强版 Codex Desktop) 已安装。" -ForegroundColor Green
+    return
+  }
   if (Test-CodexInstalled) {
     Write-Host "Codex Desktop is installed." -ForegroundColor Green
     return
   }
-  if (-not (Test-CodexInstalled)) {
-    Fail "Codex Desktop (ChatGPT) was not found. Install it first, then run manage.bat again."
-  }
+  Fail "Codex Desktop (ChatGPT) or Codex++ was not found. Install one first, then run manage.bat again."
 }
 
 function Invoke-Npm([string[]]$Arguments) {
@@ -231,16 +248,30 @@ function Wait-Http([string]$Url, [int]$Seconds = 30, [string]$Label = "服务") 
   return $false
 }
 
-function Test-Cdp {
-  foreach ($hostName in @("localhost", "127.0.0.1", "::1")) {
-    $url = if ($hostName -eq "::1") {
-      "http://[$hostName]:$CdpPort/json/version"
-    } else {
-      "http://$hostName`:$CdpPort/json/version"
+function Test-CdpUrl([string]$Url) {
+  if (-not $Url) { return $false }
+  return (Test-Http "$Url/json/version")
+}
+
+function Find-CodexCdpUrl {
+  if ($script:CdpUrl -and (Test-CdpUrl $script:CdpUrl)) { return $script:CdpUrl }
+  if ($env:CODEX_CDP_URL -and (Test-CdpUrl $env:CODEX_CDP_URL)) { return $env:CODEX_CDP_URL }
+  try {
+    $chatgpt = Get-CimInstance Win32_Process -Filter "Name = 'ChatGPT.exe'" -ErrorAction Stop
+    foreach ($process in $chatgpt) {
+      if ($process.CommandLine -match '--remote-debugging-port=(\d+)') {
+        $url = "http://127.0.0.1:$([int]$Matches[1])"
+        if (Test-CdpUrl $url) { return $url }
+      }
     }
-    if (Test-Http $url) { return $true }
-  }
-  return $false
+  } catch {}
+  $defaultUrl = "http://127.0.0.1:$CdpPort"
+  if (Test-CdpUrl $defaultUrl) { return $defaultUrl }
+  return $null
+}
+
+function Test-Cdp {
+  return [bool](Find-CodexCdpUrl)
 }
 
 function Wait-Cdp([int]$Seconds = 120) {
@@ -277,16 +308,18 @@ function Stop-BridgeServices {
 
 function Start-CodexControl {
   if (Test-Cdp) {
-    Write-Host (T "Codex 控制通道已在线。" "Codex control channel is already online.") -ForegroundColor Green
+    $script:CdpUrl = Find-CodexCdpUrl
+    Write-Host (T "Codex 控制通道已在线：$script:CdpUrl" "Codex control channel is already online: $script:CdpUrl") -ForegroundColor Green
     return
   }
   Write-Step (T "启动 Codex Desktop（本地控制通道）" "Starting Codex Desktop (local control channel)")
-  Write-Host (T "正在打开 Codex。首次启动或首次创建配置时可能需要等待一两分钟。" "Opening Codex. First launch or first-time setup may take a minute or two.") -ForegroundColor Yellow
+  Write-Host (T "正在打开 Codex/Codex++。首次启动或首次创建配置时可能需要等待一两分钟。" "Opening Codex/Codex++. First launch or first-time setup may take a minute or two.") -ForegroundColor Yellow
   & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "scripts\start-codex-cdp.ps1")
   if ($LASTEXITCODE -ne 0 -or -not (Wait-Cdp 120)) {
-    Fail (T "Codex 控制通道在 120 秒内没有就绪。请完全退出 Codex Desktop 后重新运行 manage.bat。" "Codex control channel did not become ready within 120 seconds. Fully quit Codex Desktop and run manage.bat again.")
+    Fail (T "Codex 控制通道在 120 秒内没有就绪。请确认 Codex Desktop 或 Codex++ 已登录后重新运行 manage.bat。" "Codex control channel did not become ready within 120 seconds. Make sure Codex Desktop or Codex++ is signed in and run manage.bat again.")
   }
-  Write-Host (T "Codex 控制通道已在线：http://localhost:$CdpPort" "Codex control channel is online: http://localhost:$CdpPort") -ForegroundColor Green
+  $script:CdpUrl = Find-CodexCdpUrl
+  Write-Host (T "Codex 控制通道已在线：$script:CdpUrl" "Codex control channel is online: $script:CdpUrl") -ForegroundColor Green
 }
 
 function Get-LanAddresses {
@@ -329,6 +362,10 @@ function Start-Bridge([string]$HostAddress = "0.0.0.0", [bool]$RequireCdp = $tru
   Stop-BridgeServices
   if (-not (Test-Path -LiteralPath $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
 
+  if (-not $env:CODEX_CDP_URL) {
+    $script:CdpUrl = Find-CodexCdpUrl
+    if ($script:CdpUrl) { $env:CODEX_CDP_URL = $script:CdpUrl }
+  }
   $env:BRIDGE_HOST = $HostAddress
   $env:BRIDGE_PORT = "$BridgePort"
   $serverEntry = if (Test-Path -LiteralPath $PackagedServer) { "app/server.cjs" } else { "dist/server/index.js" }
@@ -377,8 +414,9 @@ function Show-Status {
   } else {
     Write-Host "  [OFFLINE] Bridge :$BridgePort" -ForegroundColor Yellow
   }
-  if (Test-Cdp) {
-    Write-Host "  [ONLINE]  Codex control" -ForegroundColor Green
+  $cdpUrl = Find-CodexCdpUrl
+  if ($cdpUrl) {
+    Write-Host "  [ONLINE]  Codex control ($cdpUrl)" -ForegroundColor Green
   } else {
     Write-Host "  [OFFLINE] Codex control" -ForegroundColor Yellow
   }

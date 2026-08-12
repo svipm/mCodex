@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Activity, ArrowLeft, Ban, Bot, Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, CircleAlert, Clock3, Folder, FolderPlus, FolderSearch, Hand, ImagePlus, Languages, LoaderCircle, PlugZap, Plus, RefreshCw, Search, Send, ShieldAlert, Square, SquarePen, Terminal, X } from "lucide-react";
+import { Activity, ArrowLeft, Ban, Blocks, Bot, CalendarClock, Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, CircleAlert, Clock3, Folder, FolderPlus, FolderSearch, GitPullRequest, Hand, ImagePlus, Languages, LoaderCircle, Pin, PlugZap, Plus, RefreshCw, Search, Send, Settings, ShieldAlert, Square, SquarePen, Terminal, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { QRCodeSVG } from "qrcode.react";
@@ -15,11 +15,17 @@ type DisplayItem = DesktopDisplayItem<Item>;
 interface Approval { id: string; threadId: string; kind: string; title: string; detail: string; source: string }
 interface Project { id: string; name: string; rootPaths: string[]; threadIds: string[] }
 type PermissionMode = "ask" | "auto" | "full-access";
+type DesktopMode = "codex" | "chatgpt-work";
+type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 interface DesktopPermission { mode: PermissionMode | null; label: string | null; available: boolean }
-interface DesktopState { connected?: boolean; editorReady?: boolean; currentThreadId?: string | null; runningThreadIds?: string[]; approval?: Approval | null; permissions?: DesktopPermission }
+interface DesktopState { connected?: boolean; editorReady?: boolean; currentThreadId?: string | null; runningThreadIds?: string[]; approval?: Approval | null; permissions?: DesktopPermission; mode?: DesktopMode | null; reasoningEffort?: ReasoningEffort | null }
 type FollowUpMode = "queue" | "steer" | "interrupt";
 interface PendingImage { id: string; file: File; preview: string }
 interface PairingInfo { available: boolean; expiresAt: number; pairingCode: string; urls: string[] }
+interface GitStatus { branch: string | null; additions: number; deletions: number; changedFiles: number; ahead: number; behind: number }
+interface TokenUsage { inputTokens: number; outputTokens: number; cacheTokens: number; cacheHitRate: number; totalTokens: number; cost: number | null; model: string | null }
+interface EnvironmentInfo { git: GitStatus | null; tokenUsage: TokenUsage | null; sources: string[] }
+const pinnedStorageKey = "mcodex.pinnedThreads";
 
 const recentGroupId = "__recent__";
 type Locale = "zh-CN" | "en-US";
@@ -40,7 +46,7 @@ const translations: Record<string, string> = {
   "已编辑 {path}": "Edited {path}", "已编辑 {count} 个文件": "Edited {count} files", "收起文件": "Collapse files", "再显示 {count} 个文件": "Show {count} more files",
   "已处理": "Processed", "运行了 {count} 个命令": "Ran {count} commands", "运行了多个命令": "Ran multiple commands", "运行了 1 个命令": "Ran 1 command",
   "仅支持 10 MB 以内的 AVIF、GIF、JPEG、PNG 或 WebP 图片": "Only AVIF, GIF, JPEG, PNG, or WebP images up to 10 MB are supported", "每条消息最多添加 4 张图片": "You can attach up to 4 images per message",
-  "Codex 远程控制": "Codex Remote Control", "本地任务工作台": "Local task workspace", "新建任务": "New task", "创建项目": "Create project", "刷新任务": "Refresh tasks",
+  "Codex": "Codex", "拉取请求": "Pull requests", "已安排": "Scheduled", "插件": "Plugins", "设置": "Settings", "项目": "Projects", "批准模式": "Approval mode", "切换模式": "Switch mode", "思考能力": "Thinking", "轻度": "Light", "中": "Medium", "高": "High", "极高": "X-High", "添加": "Add", "普通对话": "General chat", "完全访问": "Full access", "选择项目并输入第一条消息": "Choose a project and enter your first message", "Codex 远程控制": "Codex Remote Control", "本地任务工作台": "Local task workspace", "新建任务": "New task", "创建项目": "Create project", "刷新任务": "Refresh tasks",
   "正在连接": "Connecting", "实时连接": "Live connection", "连接断开": "Disconnected", "连接控制": "Control connection", "可控制": "Controllable", "只读": "Read-only", "搜索任务": "Search tasks",
   "折叠 {name}": "Collapse {name}", "展开 {name}": "Expand {name}", "在 {name} 中新建任务": "New task in {name}", "暂无摘要": "No summary", "暂无任务": "No tasks", "最近": "Recent", "展开或折叠最近任务": "Expand or collapse recent tasks", "新建普通对话": "New conversation", "没有找到相关任务": "No matching tasks",
   "返回任务列表": "Back to task list", "停止任务": "Stop task", "停止": "Stop", "批准": "Approve", "拒绝": "Reject", "正在加载对话": "Loading conversation", "正在思考": "Thinking", "更改 Desktop 权限": "Change Desktop permissions", "Desktop 权限暂不可用": "Desktop permissions unavailable", "添加图片": "Attach image", "移除 {name}": "Remove {name}", "正在连接当前任务的控制…": "Connecting to task controls…", "正在发送，请稍候…": "Sending, please wait…", "正在连接桌面控制…": "Connecting to Desktop controls…", "向当前任务发送消息": "Send a message to the current task", "桌面控制尚未连接，当前为只读模式": "Desktop controls are not connected; read-only mode", "正在发送": "Sending", "发送": "Send",
@@ -48,7 +54,14 @@ const translations: Record<string, string> = {
   "请求超时，请检查连接后重试": "The request timed out. Check the connection and try again",
   "任务正在运行": "Task is running", "确认完全访问": "Confirm full access", "Desktop 权限": "Desktop permissions", "关闭": "Close", "这条消息将作为正在运行任务的后续指令发送：": "This message will be sent as a follow-up to the running task:", "已附加 {count} 张图片": "{count} images attached", "允许不受限制的访问？": "Allow unrestricted access?", "Codex 将无需批准即可访问互联网、运行命令，并读取、修改或删除这台电脑上的任意文件。": "Codex can access the internet, run commands, and read, modify, or delete any file on this computer without approval.", "返回": "Back", "正在同步": "Syncing", "开启完全访问": "Enable full access", "文件夹": "Folder", "不选择文件夹（普通对话）": "No folder (general conversation)", "第一条消息": "First message", "输入要交给 Codex 的任务": "Enter the task for Codex", "取消": "Cancel", "正在创建": "Creating", "创建并发送": "Create and send", "项目名称": "Project name", "留空则使用文件夹名称": "Leave blank to use the folder name", "项目文件夹路径": "Project folder path", "例如 C:\\Users\\你的用户名\\Desktop\\项目": "e.g. C:\\Users\\your-name\\Desktop\\project", "浏览远程电脑文件夹": "Browse folders on the remote computer", "浏览...": "Browse...", "正在添加": "Adding", "添加项目": "Add project",
   "选择文件夹": "Select folder", "快捷位置": "Quick locations", "加载中…": "Loading…", "返回上级": "Go to parent", "返回快捷位置": "Back to quick locations", "此目录没有子文件夹": "This folder has no subfolders", "选择此文件夹": "Select this folder", "没有可浏览的目录，请确认 Bridge 已重启到最新版本": "No folders available. Restart the Bridge and try again.",
-  "配对码错误或已过期，请使用启动窗口中最新的配对码": "The pairing code is invalid or expired. Use the latest code from the launcher.", "配对尝试次数过多，请重新运行一键启动脚本": "Too many pairing attempts. Run the one-click launcher again.", "任务不存在或已被移除": "Task not found or already removed", "消息内容不能为空或过长": "Message is empty or too long", "请输入消息或添加图片": "Enter a message or attach an image", "图片无效；每条最多 4 张，每张不超过 10 MB": "Invalid images. Attach up to 4 images, each no larger than 10 MB", "未找到 Desktop 图片上传入口，请重启 Codex Desktop 后重试": "Desktop image upload is unavailable. Restart Codex Desktop and try again.", "消息标识无效，请重新发送": "Invalid message ID. Send it again.", "审批操作无效，请重试": "Invalid approval action. Try again.", "当前任务仍在运行，请等待完成或先停止任务": "The task is still running. Wait for it to finish or stop it first.", "后续消息处理方式无效，请重新选择": "Invalid follow-up mode. Choose again.", "当前任务已经结束，请直接发送消息": "The task has ended. Send a new message.", "后续消息已提交，但暂未读取到任务记录，请到桌面端检查": "Follow-up submitted, but the task record is not available yet. Check Desktop.", "暂时找不到停止按钮，请确认桌面端正在运行此任务": "The stop control is unavailable. Make sure Desktop is running this task.", "暂时找不到审批按钮，请确认桌面端正在等待审批": "The approval control is unavailable. Make sure Desktop is waiting for approval.", "无法操作桌面端输入框，请重新运行一键启动脚本": "Cannot control the Desktop composer. Run the one-click launcher again.", "目录路径无效": "Invalid directory path", "无法读取该目录，请换一个文件夹": "Cannot read this folder. Choose another one.", "桌面端发送按钮暂时不可用，请稍后重试": "Desktop send control is unavailable. Try again shortly.", "消息已提交，但暂未确认写入记录，请到桌面端检查": "Message submitted, but the receipt is not available yet. Check Desktop.", "无法连接 Codex 桌面端，请重新运行一键启动脚本": "Cannot connect to Codex Desktop. Run the one-click launcher again.", "桌面端响应超时，请确认 Codex 窗口运行正常后重试": "Desktop timed out. Make sure the Codex window is running, then try again.", "暂时找不到新建任务按钮，请确认 Codex 桌面端已经打开": "The new-task control is unavailable. Make sure Codex Desktop is open.", "新任务已提交，但暂未读取到任务记录，请到桌面端检查": "New task submitted, but the task record is not available yet. Check Desktop.", "所选项目不存在，请刷新项目列表": "Selected project not found. Refresh the project list.", "项目名称已经存在，请换一个名称": "That project name already exists. Choose another.", "请输入项目文件夹的完整路径": "Enter the full path to the project folder.", "项目文件夹不存在，请检查电脑上的路径": "Project folder not found. Check the path on the computer.", "项目名称无效，请重新输入": "Invalid project name. Enter another name.", "无法更新 Codex 桌面端，请重新运行一键启动脚本": "Cannot update Codex Desktop. Run the one-click launcher again.", "桌面端权限菜单暂时不可用，请确认当前任务编辑区已打开": "Desktop permission controls are unavailable. Open the task composer and try again.", "该权限已被 Desktop 策略禁用，无法从网页切换": "This permission is disabled by Desktop policy and cannot be changed here.", "权限请求已发送，但 Desktop 未确认变更，请回到桌面端检查": "Permission change sent, but Desktop did not confirm it. Check Desktop.", "无法连接本机服务，请确认一键启动窗口仍在运行": "Cannot connect to the local service. Make sure the launcher is still running.", "服务内部出错，请重新运行一键启动脚本": "Internal service error. Run the one-click launcher again.", "请求无效，请刷新页面后重试": "Invalid request. Refresh the page and try again.", "本机服务暂时出错，请稍后重试": "The local service is temporarily unavailable. Try again shortly."
+  "配对码错误或已过期，请使用启动窗口中最新的配对码": "The pairing code is invalid or expired. Use the latest code from the launcher.", "配对尝试次数过多，请重新运行一键启动脚本": "Too many pairing attempts. Run the one-click launcher again.", "任务不存在或已被移除": "Task not found or already removed", "消息内容不能为空或过长": "Message is empty or too long", "请输入消息或添加图片": "Enter a message or attach an image", "图片无效；每条最多 4 张，每张不超过 10 MB": "Invalid images. Attach up to 4 images, each no larger than 10 MB", "未找到 Desktop 图片上传入口，请重启 Codex Desktop 后重试": "Desktop image upload is unavailable. Restart Codex Desktop and try again.", "消息标识无效，请重新发送": "Invalid message ID. Send it again.", "审批操作无效，请重试": "Invalid approval action. Try again.", "当前任务仍在运行，请等待完成或先停止任务": "The task is still running. Wait for it to finish or stop it first.", "后续消息处理方式无效，请重新选择": "Invalid follow-up mode. Choose again.", "当前任务已经结束，请直接发送消息": "The task has ended. Send a new message.", "后续消息已提交，但暂未读取到任务记录，请到桌面端检查": "Follow-up submitted, but the task record is not available yet. Check Desktop.", "暂时找不到停止按钮，请确认桌面端正在运行此任务": "The stop control is unavailable. Make sure Desktop is running this task.", "暂时找不到审批按钮，请确认桌面端正在等待审批": "The approval control is unavailable. Make sure Desktop is waiting for approval.", "无法操作桌面端输入框，请重新运行一键启动脚本": "Cannot control the Desktop composer. Run the one-click launcher again.", "目录路径无效": "Invalid directory path", "无法读取该目录，请换一个文件夹": "Cannot read this folder. Choose another one.", "桌面端发送按钮暂时不可用，请稍后重试": "Desktop send control is unavailable. Try again shortly.", "消息已提交，但暂未确认写入记录，请到桌面端检查": "Message submitted, but the receipt is not available yet. Check Desktop.", "无法连接 Codex 桌面端，请重新运行一键启动脚本": "Cannot connect to Codex Desktop. Run the one-click launcher again.", "桌面端响应超时，请确认 Codex 窗口运行正常后重试": "Desktop timed out. Make sure the Codex window is running, then try again.", "暂时找不到新建任务按钮，请确认 Codex 桌面端已经打开": "The new-task control is unavailable. Make sure Codex Desktop is open.", "新任务已提交，但暂未读取到任务记录，请到桌面端检查": "New task submitted, but the task record is not available yet. Check Desktop.", "所选项目不存在，请刷新项目列表": "Selected project not found. Refresh the project list.", "项目名称已经存在，请换一个名称": "That project name already exists. Choose another.", "请输入项目文件夹的完整路径": "Enter the full path to the project folder.", "项目文件夹不存在，请检查电脑上的路径": "Project folder not found. Check the path on the computer.", "项目名称无效，请重新输入": "Invalid project name. Enter another name.", "无法更新 Codex 桌面端，请重新运行一键启动脚本": "Cannot update Codex Desktop. Run the one-click launcher again.", "桌面端权限菜单暂时不可用，请确认当前任务编辑区已打开": "Desktop permission controls are unavailable. Open the task composer and try again.", "该权限已被 Desktop 策略禁用，无法从网页切换": "This permission is disabled by Desktop policy and cannot be changed here.", "权限请求已发送，但 Desktop 未确认变更，请回到桌面端检查": "Permission change sent, but Desktop did not confirm it. Check Desktop.", "无法连接本机服务，请确认一键启动窗口仍在运行": "Cannot connect to the local service. Make sure the launcher is still running.", "服务内部出错，请重新运行一键启动脚本": "Internal service error. Run the one-click launcher again.", "请求无效，请刷新页面后重试": "Invalid request. Refresh the page and try again.", "本机服务暂时出错，请稍后重试": "The local service is temporarily unavailable. Try again shortly.",
+  "文件": "File", "编辑": "Edit", "视图": "View", "未知": "Unknown", "主菜单": "Main menu",
+  "新对话": "New conversation", "环境信息": "Environment", "变更": "Changes", "分支": "Branch",
+  "来源": "Sources", "查看全部": "View all", "收起": "Collapse",
+  "非 Git 仓库": "Not a Git repo", "选择任务后显示环境信息": "Select a task to view environment",
+  "进行中的目标": "Active goal", "本轮": "Turn", "输入": "Input", "输出": "Output",
+  "会话": "Session", "缓存": "Cache", "费": "Cost", "置顶": "Pinned",
+  "固定": "Pin", "取消固定": "Unpin"
 };
 
 function t(source: string, params: Record<string, string | number> = {}): string {
@@ -241,6 +254,85 @@ function applyDesktopRuntime(threads: Thread[], status: DesktopState): Thread[] 
   });
 }
 
+function TopMenuBar({ cdpReady, topMenuOpen, onToggleMenu, onCloseMenu, onNewTask, onNewProject, onRefresh, onToggleLocale, locale }: { cdpReady: boolean | null; topMenuOpen: string | null; onToggleMenu: (id: string) => void; onCloseMenu: () => void; onNewTask: () => void; onNewProject: () => void; onRefresh: () => void; onToggleLocale: () => void; locale: Locale }) {
+  const menus: Array<{ id: string; label: string; items: Array<{ label: string; action: () => void; disabled?: boolean } | "separator"> }> = [
+    { id: "file", label: t("文件"), items: [
+      { label: t("新建任务"), action: onNewTask, disabled: !cdpReady },
+      { label: t("创建项目"), action: onNewProject, disabled: !cdpReady },
+      "separator",
+      { label: t("刷新任务"), action: onRefresh },
+    ]},
+    { id: "edit", label: t("编辑"), items: [
+      { label: t("新对话"), action: onNewTask, disabled: !cdpReady },
+    ]},
+    { id: "view", label: t("视图"), items: [
+      { label: locale === "zh-CN" ? "Switch to English" : "切换到中文", action: onToggleLocale },
+    ]},
+  ];
+  return <nav className="top-menu" aria-label={t("主菜单")} onClick={(event) => event.stopPropagation()}>
+    {menus.map((menu) => <div className="top-menu-item" key={menu.id}>
+      <button className="top-menu-trigger" onClick={() => onToggleMenu(menu.id)} aria-expanded={topMenuOpen === menu.id}>{menu.label}</button>
+      {topMenuOpen === menu.id && menu.items.length > 0 && <div className="top-menu-dropdown">
+        {menu.items.map((item, index) => item === "separator" ? <hr key={`sep-${index}`} /> : <button key={item.label} onClick={() => { item.action(); onCloseMenu(); }} disabled={item.disabled}>{item.label}</button>)}
+      </div>}
+    </div>)}
+  </nav>;
+}
+
+function EnvironmentPanel({ info, sourcesExpanded, onToggleSources, cwd }: { info: EnvironmentInfo | null; sourcesExpanded: boolean; onToggleSources: () => void; cwd: string | null }) {
+  const git = info?.git ?? null;
+  const tokens = info?.tokenUsage ?? null;
+  const sources = info?.sources ?? [];
+  const visibleSources = sourcesExpanded ? sources : sources.slice(0, 3);
+  const hiddenCount = sources.length - visibleSources.length;
+  return <aside className="env-panel">
+    <header className="env-panel-header"><h2>{t("环境信息")}</h2></header>
+    <div className="env-panel-body">
+      {git ? <>
+        <section className="env-section">
+          <div className="env-section-title">{t("变更")}</div>
+          <div className="env-row"><span className="env-delta-add">+{git.additions.toLocaleString()}</span><span className="env-delta-del">-{git.deletions.toLocaleString()}</span></div>
+        </section>
+        <section className="env-section">
+          <div className="env-section-title">{t("分支")}</div>
+          <div className="env-row"><span className="env-branch"><GitPullRequest size={13} />{git.branch}</span>{git.ahead > 0 && <span className="env-ahead-behind">↑{git.ahead}</span>}{git.behind > 0 && <span className="env-ahead-behind">↓{git.behind}</span>}</div>
+        </section>
+      </> : <div className="env-empty">{cwd ? t("非 Git 仓库") : t("选择任务后显示环境信息")}</div>}
+      {sources.length > 0 && <section className="env-section">
+        <div className="env-section-title">{t("来源")}</div>
+        <div className="env-sources">
+          {visibleSources.map((src) => <a key={src} className="env-source-link" href={src} target="_blank" rel="noreferrer"><ChevronRight size={14} /><span>{src.replace(/^https?:\/\//, "").replace(/\/$/, "")}</span></a>)}
+          {hiddenCount > 0 && <button className="env-source-toggle" onClick={onToggleSources}>{sourcesExpanded ? t("收起") : t("查看全部")} ({sources.length})</button>}
+        </div>
+      </section>}
+    </div>
+  </aside>;
+}
+
+function formatTokenCount(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(n);
+}
+
+function StatusBar({ tokens, model, reasoningEffort, threadTitle, running }: { tokens: TokenUsage | null; model: string | null; reasoningEffort: ReasoningEffort | null; threadTitle: string; running: boolean }) {
+  const effortLabel = reasoningEffort === "low" ? t("轻度") : reasoningEffort === "high" ? t("高") : reasoningEffort === "xhigh" ? t("极高") : reasoningEffort === "medium" ? t("中") : "";
+  return <footer className="status-bar">
+    {threadTitle && <span className="status-goal">{running ? `${t("进行中的目标")} ${threadTitle}` : threadTitle}</span>}
+    {tokens && <span className="status-metrics">
+      <span className="status-metric">{t("本轮")} {t("输入")} <b>{formatTokenCount(tokens.inputTokens)}</b> {t("输出")} <b>{formatTokenCount(tokens.outputTokens)}</b></span>
+      <span className="status-metric">{t("会话")} <b>{formatTokenCount(tokens.totalTokens)}</b></span>
+      {tokens.cacheTokens > 0 && <span className="status-metric">{t("缓存")} <b>{formatTokenCount(tokens.cacheTokens)}</b> ({Math.round(tokens.cacheHitRate * 100)}%)</span>}
+      {tokens.cost != null && <span className="status-metric">{t("费")} <b>${tokens.cost.toFixed(2)}</b></span>}
+    </span>}
+    <span className="status-model-row">
+      {(model || tokens?.model) && <span className="status-model">{model ?? tokens?.model}</span>}
+      {effortLabel && <span className={`status-effort-badge${reasoningEffort === "xhigh" ? " xhigh" : ""}`}>{effortLabel}</span>}
+    </span>
+  </footer>;
+}
+
 function App() {
   const [locale, setLocaleState] = useState<Locale>(activeLocale);
   activeLocale = locale;
@@ -271,6 +363,8 @@ function App() {
   const [controlBusy, setControlBusy] = useState(false);
   const [desktopApproval, setDesktopApproval] = useState<Approval | null>(null);
   const [desktopPermissions, setDesktopPermissions] = useState<DesktopPermission>({ mode: null, label: null, available: false });
+  const [desktopMode, setDesktopMode] = useState<DesktopMode | null>(null);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | null>(null);
   const [dialog, setDialog] = useState<"task" | "project" | "permissions" | "follow-up" | null>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [followUpSubmitting, setFollowUpSubmitting] = useState<FollowUpMode | null>(null);
@@ -281,6 +375,10 @@ function App() {
   const [projectPath, setProjectPath] = useState("");
   const [folderBrowserOpen, setFolderBrowserOpen] = useState(false);
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(initialExpandedGroups);
+  const [envInfo, setEnvInfo] = useState<EnvironmentInfo | null>(null);
+  const [pinnedThreadIds, setPinnedThreadIds] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem(pinnedStorageKey) ?? "[]").filter((v: string) => typeof v === "string"); } catch { return []; } });
+  const [topMenuOpen, setTopMenuOpen] = useState<string | null>(null);
+  const [envSourcesExpanded, setEnvSourcesExpanded] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const selectedRef = useRef<string | null>(null);
@@ -312,8 +410,9 @@ function App() {
       const matches = !queryText || `${thread.title} ${thread.preview} ${thread.cwd ?? ""}`.toLocaleLowerCase().includes(queryText);
       return matches && (queryText ? !claimed.has(thread.id) : desktopRecent.has(thread.id));
     });
-    return { groups, recent };
-  }, [threads, projects, recentThreadIds, query]);
+    const pinned = threads.filter((thread) => pinnedThreadIds.includes(thread.id) && (!queryText || `${thread.title} ${thread.preview}`.toLocaleLowerCase().includes(queryText)));
+    return { groups, recent, pinned };
+  }, [threads, projects, recentThreadIds, query, pinnedThreadIds]);
 
   const projectForThread = useMemo(() => {
     const result = new Map<string, string>();
@@ -328,6 +427,18 @@ function App() {
       return next;
     });
   }
+  function togglePin(threadId: string) {
+    setPinnedThreadIds((current) => {
+      const next = current.includes(threadId) ? current.filter((id) => id !== threadId) : [...current, threadId];
+      localStorage.setItem(pinnedStorageKey, JSON.stringify(next));
+      return next;
+    });
+  }
+  useEffect(() => {
+    const handler = (event: MouseEvent) => { if (topMenuOpen) setTopMenuOpen(null); };
+    window.addEventListener("click", handler);
+    return () => window.removeEventListener("click", handler);
+  }, [topMenuOpen]);
 
   function openTaskDialog(projectId = "") {
     setNewTaskProjectId(projectId);
@@ -352,6 +463,8 @@ function App() {
       setDesktopThreadId(cdp?.currentThreadId ?? null);
       setDesktopApproval(cdp?.approval ?? null);
       setDesktopPermissions(cdp?.permissions ?? { mode: null, label: null, available: false });
+      setDesktopMode(cdp?.mode ?? null);
+      setReasoningEffort(cdp?.reasoningEffort ?? null);
       setNeedsPairing(false);
       setError("");
     } catch (cause) {
@@ -387,8 +500,10 @@ function App() {
     setTimelineLoading(true);
     setItems([]);
     setApprovals([]);
+    setEnvInfo(null);
     setError("");
     const timelineRequest = api<{ items: Item[]; approvals?: Approval[] }>(`/api/threads/${id}/timeline`);
+    void api<EnvironmentInfo | null>(`/api/threads/${id}/environment`).then((info) => { if (requestId === openRequestRef.current) setEnvInfo(info); }).catch(() => {});
     void timelineRequest.then((timeline) => {
       if (requestId !== openRequestRef.current) return;
       setItems(timeline.items);
@@ -466,10 +581,16 @@ function App() {
         setDesktopThreadId(data.status?.currentThreadId ?? null);
         setDesktopApproval(data.status?.approval ?? null);
         setDesktopPermissions(data.status?.permissions ?? { mode: null, label: null, available: false });
+        setDesktopMode(data.status?.mode ?? null);
+        setReasoningEffort(data.status?.reasoningEffort ?? null);
         return;
       }
       if (data.type === "stream_output") {
         setStreamingOutput(data.output ?? null);
+        return;
+      }
+      if (data.type === "environment_info") {
+        if (data.threadId === selectedRef.current) setEnvInfo(data.info ?? null);
         return;
       }
       if (data.type === "session_event") {
@@ -649,6 +770,45 @@ function App() {
     finally { setDialogBusy(false); }
   }
 
+  async function changeDesktopMode(mode: DesktopMode) {
+    if (dialogBusy || desktopMode === mode) return;
+    setDialogBusy(true);
+    setError("");
+    try {
+      const result = await api<{ mode: DesktopMode | null }>("/api/mode", { method: "PUT", body: JSON.stringify({ mode }) });
+      setDesktopMode(result.mode);
+    } catch (cause) { setError(friendlyError(cause)); }
+    finally { setDialogBusy(false); }
+  }
+
+  async function changeReasoningEffort(effort: ReasoningEffort) {
+    if (dialogBusy || reasoningEffort === effort) return;
+    setDialogBusy(true);
+    setError("");
+    try {
+      const result = await api<{ effort: ReasoningEffort | null; label: string }>("/api/reasoning", { method: "PUT", body: JSON.stringify({ effort }) });
+      setReasoningEffort(result.effort);
+    } catch (cause) { setError(friendlyError(cause)); }
+    finally { setDialogBusy(false); }
+  }
+
+  async function createTaskFromComposer() {
+    if (!draft.trim() || sending || !cdpReady) return;
+    setSending(true);
+    setError("");
+    try {
+      const result = await api<{ threadId: string }>("/api/tasks", {
+        method: "POST",
+        body: JSON.stringify({ projectId: newTaskProjectId || null, content: draft.trim(), clientMessageId: createClientMessageId() }),
+      });
+      setDraft("");
+      clearImages();
+      await refreshThreads();
+      await openThread(result.threadId, false);
+    } catch (cause) { setError(friendlyError(cause)); }
+    finally { setSending(false); }
+  }
+
   async function changePermissionMode(mode: PermissionMode) {
     if (dialogBusy || mode === desktopPermissions.mode) return;
     if (mode === "full-access" && !permissionConfirm) {
@@ -717,11 +877,28 @@ function App() {
   const composerStopsTask = selectedThread?.status === "running" && !hasPendingMessage;
 
   return <main className={`app${selected ? " thread-open" : ""}${needsPairing ? " pairing-open" : ""}`}>
-    <aside className="sidebar">
-      <header className="brand"><div className="brand-mark"><Terminal size={19} /></div><div><strong>{t("Codex 远程控制")}</strong><span>{t("本地任务工作台")}</span></div><div className="brand-actions"><button className="icon-button" onClick={() => openTaskDialog()} title={t("新建任务")} disabled={!cdpReady}><SquarePen size={18} /></button><button className="icon-button" onClick={() => setDialog("project")} title={t("创建项目")} disabled={!cdpReady}><FolderPlus size={18} /></button><button className="icon-button" onClick={() => { void refreshThreads(); void refreshProjects(); }} title={t("刷新任务")}><RefreshCw size={18} /></button><button className="language-toggle" onClick={() => setLocaleState(locale === "zh-CN" ? "en-US" : "zh-CN")} title={locale === "zh-CN" ? "Switch to English" : "切换到中文"}><Languages size={17} /><span>{locale === "zh-CN" ? "EN" : "中"}</span></button></div></header>
+        <aside className="sidebar">
+      <header className="brand"><div className="brand-mark"><Terminal size={19} /></div><div><strong>Codex</strong><span>mCodex</span></div><div className="brand-actions"><button className="icon-button" onClick={() => openTaskDialog()} title={t("新建任务")} disabled={!cdpReady}><SquarePen size={18} /></button><button className="icon-button" onClick={() => setDialog("project")} title={t("创建项目")} disabled={!cdpReady}><FolderPlus size={18} /></button><button className="icon-button" onClick={() => { void refreshThreads(); void refreshProjects(); }} title={t("刷新任务")}><RefreshCw size={18} /></button><button className="language-toggle" onClick={() => setLocaleState(locale === "zh-CN" ? "en-US" : "zh-CN")} title={locale === "zh-CN" ? "Switch to English" : "切换到中文"}><Languages size={17} /><span>{locale === "zh-CN" ? "EN" : "中"}</span></button></div></header>
       <div className="connection-row"><span className={`dot${connected === true ? " online" : connected === null ? " pending" : ""}`} />{connected === null ? t("正在连接") : connected ? t("实时连接") : t("连接断开")}<span className="divider" /><PlugZap size={14} />{cdpReady === null ? t("连接控制") : cdpReady ? t("可控制") : t("只读")}</div>
+      <TopMenuBar cdpReady={cdpReady} topMenuOpen={topMenuOpen} onToggleMenu={(id) => setTopMenuOpen(topMenuOpen === id ? null : id)} onCloseMenu={() => setTopMenuOpen(null)} onNewTask={() => openTaskDialog()} onNewProject={() => setDialog("project")} onRefresh={() => { void refreshThreads(); void refreshProjects(); }} onToggleLocale={() => setLocaleState(locale === "zh-CN" ? "en-US" : "zh-CN")} locale={locale} />
+      <nav className="desktop-nav" aria-label={t("主菜单")}>
+        <button className="sidebar-item nav-item" onClick={() => openTaskDialog(newTaskProjectId)} disabled={!cdpReady} title={t("新对话")}><SquarePen size={16} /><span>{t("新对话")}</span></button>
+        <button className="sidebar-item nav-item" onClick={() => setQuery("拉取请求")} title={t("拉取请求")}><GitPullRequest size={16} /><span>{t("拉取请求")}</span></button>
+        <button className="sidebar-item nav-item" onClick={() => setQuery("已安排")} title={t("已安排")}><CalendarClock size={16} /><span>{t("已安排")}</span></button>
+        <button className="sidebar-item nav-item" onClick={() => setQuery("插件")} title={t("插件")}><Blocks size={16} /><span>{t("插件")}</span></button>
+      </nav>
       <label className="search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("搜索任务")} /></label>
       <div className="thread-list">
+        {groupedThreads.pinned.length > 0 && <section className="project-group pinned-group">
+          <div className="sidebar-caption"><Pin size={13} style={{ verticalAlign: "-1px", marginRight: 5 }} />{t("置顶")}</div>
+          {groupedThreads.pinned.map((thread) => <button key={thread.id} className={`thread-row ${selected === thread.id ? "selected" : ""}`} onClick={() => void openThread(thread.id)} aria-current={desktopThreadId === thread.id ? "page" : undefined}>
+            <span className="thread-state">{isActivelyRunning(thread, desktopThreadId) ? <LoaderCircle className="spin running-spinner" size={14} /> : <span className={`status-pip ${thread.status}`} />}</span>
+            <span className="thread-copy"><strong>{thread.title}</strong><span>{thread.preview || t("暂无摘要")}</span></span>
+            <time>{new Date(thread.updatedAt).toLocaleTimeString(activeLocale, { hour: "2-digit", minute: "2-digit" })}</time>
+            <span className="thread-pin pinned" role="button" tabIndex={0} title={t("取消固定")} onClick={(e) => { e.stopPropagation(); togglePin(thread.id); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); togglePin(thread.id); } }}><Pin size={13} /></span>
+          </button>)}
+        </section>}
+        <div className="sidebar-caption">{t("项目")}</div>
         {groupedThreads.groups.filter((group) => group.visible).map(({ project, threads: projectThreads }) => {
           const expanded = expandedProjects.has(project.id) || Boolean(query.trim());
           const containsCurrent = projectThreads.some((thread) => thread.id === desktopThreadId);
@@ -737,6 +914,7 @@ function App() {
               <span className="thread-state">{isActivelyRunning(thread, desktopThreadId) ? <LoaderCircle className="spin running-spinner" size={14} /> : <span className={`status-pip ${thread.status}`} />}</span>
               <span className="thread-copy"><strong>{thread.title}</strong><span>{thread.preview || t("暂无摘要")}</span></span>
               <time>{new Date(thread.updatedAt).toLocaleTimeString(activeLocale, { hour: "2-digit", minute: "2-digit" })}</time>
+              <span className={`thread-pin${pinnedThreadIds.includes(thread.id) ? " pinned" : ""}`} role="button" tabIndex={0} title={pinnedThreadIds.includes(thread.id) ? t("取消固定") : t("固定")} onClick={(e) => { e.stopPropagation(); togglePin(thread.id); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); togglePin(thread.id); } }}><Pin size={13} /></span>
             </button>) : <p className="group-empty">{t("暂无任务")}</p>}</div>}
           </section>;
         })}
@@ -751,10 +929,15 @@ function App() {
             <span className="thread-state">{isActivelyRunning(thread, desktopThreadId) ? <LoaderCircle className="spin running-spinner" size={14} /> : <span className={`status-pip ${thread.status}`} />}</span>
             <span className="thread-copy"><strong>{thread.title}</strong><span>{thread.preview || thread.cwd || t("暂无摘要")}</span></span>
             <time>{new Date(thread.updatedAt).toLocaleTimeString(activeLocale, { hour: "2-digit", minute: "2-digit" })}</time>
+            <span className={`thread-pin${pinnedThreadIds.includes(thread.id) ? " pinned" : ""}`} role="button" tabIndex={0} title={pinnedThreadIds.includes(thread.id) ? t("取消固定") : t("固定")} onClick={(e) => { e.stopPropagation(); togglePin(thread.id); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); togglePin(thread.id); } }}><Pin size={13} /></span>
           </button>)}</div>}
         </section>}
         {query.trim() && groupedThreads.groups.every((group) => !group.visible) && groupedThreads.recent.length === 0 && <p className="sidebar-empty">{t("没有找到相关任务")}</p>}
       </div>
+      <footer className="sidebar-footer">
+        <button className="sidebar-item" onClick={() => setDialog("project")} disabled={!cdpReady} title={t("创建项目")}><FolderPlus size={16} /><span>{t("项目")}</span></button>
+        <button className="sidebar-item" onClick={() => setLocaleState(locale === "zh-CN" ? "en-US" : "zh-CN")} title={t("设置")}><Settings size={16} /><span>{t("设置")}</span></button>
+      </footer>
     </aside>
     <section className="workspace">
       {selectedThread ? <>
@@ -768,9 +951,11 @@ function App() {
             if (display.type === "file_change") return <FileChangeCard key={display.id} display={display} />;
             const item = display.item;
             if (item.role === "assistant") return <article key={item.id} className="assistant-message markdown-body">{item.images?.length ? <MessageImages images={item.images} threadId={item.threadId} /> : null}{item.text && <MarkdownText text={item.text} />}</article>;
-            if (item.role === "user") return <article key={item.id} className="event user">
+            if (item.role === "user") return <React.Fragment key={item.id}>
+              {display.step != null && <div className="step-indicator"><span className="step-dot" />Step {display.step}</div>}
+              <article className="event user">
               <div className="event-body">{item.timestamp && <div className="event-meta"><time>{new Date(item.timestamp).toLocaleTimeString(activeLocale)}</time></div>}<div className="user-bubble">{item.images?.length ? <MessageImages images={item.images} threadId={item.threadId} /> : null}{item.text && <div className="message-text markdown-body"><MarkdownText text={item.text} /></div>}</div></div>
-            </article>;
+            </article></React.Fragment>;
             return <article key={item.id} className={`event ${item.role}`}>
               <div className="event-icon"><Clock3 size={16} /></div>
               <div className="event-body"><div className="event-meta"><span>{eventLabel(item)}</span>{item.timestamp && <time>{new Date(item.timestamp).toLocaleTimeString(activeLocale)}</time>}</div>{item.images?.length ? <MessageImages images={item.images} threadId={item.threadId} /> : null}{item.text && <div className="message-text markdown-body"><MarkdownText text={item.text} /></div>}</div>
@@ -780,20 +965,53 @@ function App() {
           {liveOutput && <article className="assistant-message markdown-body streaming-message"><MarkdownText text={liveOutput} /><span className="stream-caret" aria-hidden="true" /></article>}
         </div>
         {error && <div className="error-bar"><CircleAlert size={16} />{error}</div>}
+        <StatusBar tokens={envInfo?.tokenUsage ?? null} model={null} reasoningEffort={reasoningEffort} threadTitle={selectedThread.title} running={isActivelyRunning(selectedThread, desktopThreadId)} />
         <footer className="composer">
-          <div className="composer-toolbar">
-            <button className={`permission-trigger ${desktopPermissions.mode ?? "unknown"}`} type="button" onClick={openPermissionsDialog} disabled={!desktopPermissions.available} title={desktopPermissions.available ? t("更改 Desktop 权限") : t("Desktop 权限暂不可用")}>
-              {desktopPermissions.mode === "full-access" ? <ShieldAlert size={15} /> : desktopPermissions.mode === "auto" ? <Bot size={15} /> : <Hand size={15} />}
-              <span>{permissionModeLabel(desktopPermissions.mode, desktopPermissions.label)}</span><ChevronUp size={14} />
-            </button>
-            <button className="attach-button" type="button" onClick={() => imageInputRef.current?.click()} disabled={!cdpReady || sending || switchingThread || pendingImages.length >= 4} title={t("添加图片")}><ImagePlus size={16} /></button>
-            <input ref={imageInputRef} className="image-file-input" type="file" accept="image/avif,image/gif,image/jpeg,image/png,image/webp" multiple onChange={(event) => { addImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
-          </div>
+                  <div className="composer-toolbar">
+          <select className="composer-control composer-project" value={newTaskProjectId || (selected ? projectForThread.get(selected) ?? "" : "")} onChange={(event) => setNewTaskProjectId(event.target.value)} aria-label={t("项目")} disabled={dialogBusy}>
+            <option value="">{t("普通对话")}</option>
+            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
+          <select className="composer-control" value={desktopPermissions.mode ?? ""} onChange={(event) => void changePermissionMode(event.target.value as PermissionMode)} aria-label={t("批准模式")} disabled={!desktopPermissions.available || dialogBusy}>
+            <option value="">{t("权限未知")}</option>
+            <option value="ask">{t("请求批准")}</option>
+            <option value="auto">{t("替我审批")}</option>
+            <option value="full-access">{t("完全访问")}</option>
+          </select>
+          <select className="composer-control" value={desktopMode ?? ""} onChange={(event) => void changeDesktopMode(event.target.value as DesktopMode)} aria-label={t("切换模式")} disabled={!cdpReady || desktopMode === null || dialogBusy}>
+            <option value="" disabled>{t("未知")}</option>
+            <option value="codex">Codex</option>
+            <option value="chatgpt-work">ChatGPT Work</option>
+          </select>
+          <select className="composer-control" value={reasoningEffort ?? ""} onChange={(event) => void changeReasoningEffort(event.target.value as ReasoningEffort)} aria-label={t("思考能力")} disabled={!cdpReady || reasoningEffort === null || dialogBusy}>
+            <option value="" disabled>{t("未知")}</option>
+            <option value="low">{t("轻度")}</option>
+            <option value="medium">{t("中")}</option>
+            <option value="high">{t("高")}</option>
+            <option value="xhigh">{t("极高")}</option>
+          </select>
+          <button className="attach-button" type="button" onClick={() => imageInputRef.current?.click()} disabled={!cdpReady || sending || switchingThread || pendingImages.length >= 4} title={t("添加图片")}><ImagePlus size={16} /><span>{t("添加")}</span></button>
+          <input ref={imageInputRef} className="image-file-input" type="file" accept="image/avif,image/gif,image/jpeg,image/png,image/webp" multiple onChange={(event) => { addImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
+        </div>
           {pendingImages.length > 0 && <div className="pending-images">{pendingImages.map((image) => <div className="pending-image" key={image.id}><img src={image.preview} alt={image.file.name} /><button type="button" onClick={() => removeImage(image.id)} title={t("移除 {name}", { name: image.file.name })} disabled={sending}><X size={14} /></button></div>)}</div>}
           <div className="composer-input-row"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onPaste={(event) => { const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/")); if (images.length) { event.preventDefault(); addImages(images); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder={switchingThread ? t("正在连接当前任务的控制…") : sending ? t("正在发送，请稍候…") : cdpReady === null ? t("正在连接桌面控制…") : cdpReady ? t("向当前任务发送消息") : t("桌面控制尚未连接，当前为只读模式")} disabled={!cdpReady || sending || switchingThread} /><button className={`send-button${composerStopsTask ? " stop" : ""}`} onClick={() => composerStopsTask ? void control("stop") : void sendMessage()} disabled={!cdpReady || sending || switchingThread || controlBusy || (!composerStopsTask && !hasPendingMessage)} title={composerStopsTask ? t("停止任务") : sending ? t("正在发送") : t("发送")} aria-label={composerStopsTask ? t("停止任务") : t("发送")}>{composerStopsTask ? <Square size={13} fill="currentColor" strokeWidth={0} /> : sending ? <LoaderCircle className="spin" size={19} /> : <Send size={19} />}</button></div>
         </footer>
-      </> : <div className={`empty${needsPairing ? " pairing-empty" : ""}`}><div className="empty-mark"><Terminal size={28} /></div><h1>{needsPairing ? t("连接这台电脑") : t("选择一个任务")}</h1><p>{needsPairing ? pairing ? t("正在验证并加载任务，请稍候…") : t("手机与电脑连接同一 Wi-Fi 后，可扫码或输入配对码。") : t("任务进度会从本地会话文件实时同步。")}</p>{needsPairing && pairingInfo?.urls[0] && <section className="pairing-qr" aria-label={t("手机扫码连接")}><div className="pairing-qr-code"><QRCodeSVG value={pairingInfo.urls[0]} size={196} level="M" marginSize={1} /></div><div className="pairing-qr-copy"><strong>{t("用手机扫码使用")}</strong><span>{t("打开手机相机扫描二维码，将自动连接这台电脑。")}</span><small>{t("配对码")} {pairingInfo.pairingCode}</small></div></section>}{error && <div className="error-bar"><CircleAlert size={16} />{error}</div>}{needsPairing && <form className="token-form" onSubmit={(event) => void pairDevice(event)} aria-busy={pairing}><input value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} placeholder={t("配对码")} aria-label={t("配对码")} autoComplete="one-time-code" disabled={pairing} /><button type="submit" disabled={pairing || !pairingCode.trim()}>{pairing && <LoaderCircle className="spin" size={16} aria-hidden="true" />}{pairing ? t("正在配对") : t("开始配对")}</button></form>}</div>}
+      </> : <div className={`empty${needsPairing ? " pairing-empty" : ""}`}><div className="empty-mark"><Terminal size={28} /></div><h1>{needsPairing ? t("连接这台电脑") : t("新建任务")}</h1><p>{needsPairing ? pairing ? t("正在验证并加载任务，请稍候…") : t("手机与电脑连接同一 Wi-Fi 后，可扫码或输入配对码。") : t("选择项目并输入第一条消息。")}</p>{!needsPairing && <div className="empty-composer">
+          <select className="composer-control composer-project" value={newTaskProjectId} onChange={(event) => setNewTaskProjectId(event.target.value)} aria-label={t("项目")} disabled={dialogBusy || sending}>
+            <option value="">{t("普通对话")}</option>
+            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
+          <div className="empty-composer-row">
+            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void createTaskFromComposer(); } }} placeholder={t("输入要交给 Codex 的任务")} disabled={!cdpReady || sending || switchingThread} />
+            <button className="send-button" onClick={() => void createTaskFromComposer()} disabled={!cdpReady || sending || switchingThread || !draft.trim()} title={t("发送")}><Send size={19} /></button>
+          </div>
+          <div className="empty-composer-actions">
+            <button className="attach-button" type="button" onClick={() => imageInputRef.current?.click()} disabled={!cdpReady || sending || pendingImages.length >= 4} title={t("添加图片")}><ImagePlus size={16} /><span>{t("添加")}</span></button>
+            <input ref={imageInputRef} className="image-file-input" type="file" accept="image/avif,image/gif,image/jpeg,image/png,image/webp" multiple onChange={(event) => { addImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
+          </div>
+        </div>}{needsPairing && pairingInfo?.urls[0] && <section className="pairing-qr" aria-label={t("手机扫码连接")}><div className="pairing-qr-code"><QRCodeSVG value={pairingInfo.urls[0]} size={196} level="M" marginSize={1} /></div><div className="pairing-qr-copy"><strong>{t("用手机扫码使用")}</strong><span>{t("打开手机相机扫描二维码，将自动连接这台电脑。")}</span><small>{t("配对码")} {pairingInfo.pairingCode}</small></div></section>}{error && <div className="error-bar"><CircleAlert size={16} />{error}</div>}{needsPairing && <form className="token-form" onSubmit={(event) => void pairDevice(event)} aria-busy={pairing}><input value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} placeholder={t("配对码")} aria-label={t("配对码")} autoComplete="one-time-code" disabled={pairing} /><button type="submit" disabled={pairing || !pairingCode.trim()}>{pairing && <LoaderCircle className="spin" size={16} aria-hidden="true" />}{pairing ? t("正在配对") : t("开始配对")}</button></form>}</div>}
     </section>
+    <EnvironmentPanel info={envInfo} sourcesExpanded={envSourcesExpanded} onToggleSources={() => setEnvSourcesExpanded((v) => !v)} cwd={selectedThread?.cwd ?? null} />
     {dialog && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !dialogBusy) setDialog(null); }}>
       <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
         <header><h2 id="dialog-title">{dialog === "task" ? t("新建任务") : dialog === "project" ? t("创建项目") : dialog === "follow-up" ? t("任务正在运行") : permissionConfirm ? t("确认完全访问") : t("Desktop 权限")}</h2><button className="icon-button" onClick={() => { setDialog(null); setPermissionConfirm(false); }} disabled={dialogBusy} title={t("关闭")}><X size={19} /></button></header>

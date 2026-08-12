@@ -9,6 +9,20 @@ const external = !["127.0.0.1", "localhost", "::1"].includes(host);
 const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
 const tokenFile = process.env.BRIDGE_TOKEN_FILE?.trim() || path.join(codexHome, "remote-bridge-token");
 
+function discoverCdpUrl(): string {
+  const configured = process.env.CODEX_CDP_URL?.trim();
+  if (configured) return configured;
+
+  try {
+    const saved = readFileSync(path.join(os.tmpdir(), "mcodex-cdp-url"), "utf8").trim();
+    if (/^https?:\/\/127\.0\.0\.1:\d+$/.test(saved)) return saved;
+  } catch {
+    // Codex++ writes this file after starting its random CDP port.
+  }
+
+  return "http://localhost:9222";
+}
+
 function persistentToken(): { value: string; persisted: boolean } {
   if (!external) return { value: "", persisted: false };
   if (configuredToken) return { value: configuredToken, persisted: false };
@@ -48,6 +62,6 @@ export const config = {
   port: Number(process.env.BRIDGE_PORT ?? 3210),
   token,
   codexHome,
-  cdpUrl: process.env.CODEX_CDP_URL ?? "http://localhost:9222",
+  cdpUrl: discoverCdpUrl(),
   scanIntervalMs: Number(process.env.BRIDGE_SCAN_INTERVAL_MS ?? 500),
 };

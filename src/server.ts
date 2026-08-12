@@ -8,13 +8,47 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { WebSocketServer, type WebSocket } from "ws";
 import { config } from "./config.js";
 import { listDirectories, listRoots } from "./fs/folder-picker.js";
-import { CodexCdpController, isCodexPermissionMode, isFollowUpMode, type CodexImageInput, type CodexPermissionMode, type FollowUpMode } from "./cdp/controller.js";
+import { CodexCdpController, isCodexPermissionMode, isDesktopMode, isFollowUpMode, isReasoningEffort, type CodexImageInput, type CodexPermissionMode, type CdpStatus, type CodexPermissionState, type DesktopMode, type FollowUpMode, type ReasoningEffort } from "./cdp/controller.js";
 import { SessionStore } from "./sessions/store.js";
 import { SessionWatcher } from "./sessions/watcher.js";
 import { reconcileRuntimeStatuses } from "./runtime-status.js";
 import type { BridgeEvent, TimelineItem } from "./types.js";
 
 class BadRequestError extends Error {}
+
+export interface BridgeCdp {
+  status(): Promise<CdpStatus>;
+  streamingOutput(): Promise<unknown>;
+  setDesktopMode(mode: DesktopMode): Promise<{ mode: DesktopMode | null }>;
+  setReasoningEffort(effort: ReasoningEffort): Promise<{ effort: ReasoningEffort | null; label: string }>;
+  setPermissionMode(mode: CodexPermissionMode): Promise<CodexPermissionState>;
+  openThread(threadId: string): Promise<{ threadId: string }>;
+  sendMessage(threadId: string, content: string, clientMessageId: string, images: CodexImageInput[]): Promise<unknown>;
+  sendFollowUpMessage(threadId: string, content: string, mode: FollowUpMode, clientMessageId: string, images: CodexImageInput[]): Promise<unknown>;
+  stopTask(threadId: string): Promise<unknown>;
+  decideApproval(threadId: string, decision: "approve" | "reject"): Promise<unknown>;
+  listProjects(): Promise<unknown>;
+  createProject(name: string, rootPath: string): Promise<unknown>;
+  createTask(projectId: string | null, content: string, clientMessageId: string): Promise<unknown>;
+}
+
+export interface BridgeWatcher {
+  on(event: "event", listener: (event: BridgeEvent) => void): unknown;
+  start(): Promise<void>;
+  stop(): void;
+}
+
+export interface BridgeOptions {
+  sessions?: SessionStore;
+  cdp?: BridgeCdp;
+  watcher?: BridgeWatcher;
+  port?: number;
+  token?: string;
+  host?: string;
+  webRoot?: string;
+  pairingCode?: string;
+  polling?: boolean;
+}
 
 const serverLocale = /^en(?:-|$)/i.test(process.env.MCODEX_LOCALE ?? "") || (!process.env.MCODEX_LOCALE && /^en(?:-|$)/i.test(Intl.DateTimeFormat().resolvedOptions().locale)) ? "en-US" : "zh-CN";
 const serverText = (chinese: string, english: string): string => serverLocale === "en-US" ? english : chinese;
@@ -43,21 +77,13 @@ export function deferInlineTimelineImages(items: TimelineItem[]): TimelineItem[]
   });
 }
 
-function tokenMatches(candidate: string): boolean {
-  if (!config.token) return true;
-  const expected = Buffer.from(config.token);
-  const actual = Buffer.from(candidate);
-  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
-}
-
-function auth(req: Request, res: Response, next: NextFunction): void {
-  const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
-  const queryToken = mayUseQueryToken(req.method, req.path) && typeof req.query.token === "string" ? req.query.token : "";
-  if (!tokenMatches(bearer || queryToken)) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-  next();
+function makeTokenMatcher(bridgeToken: string): (candidate: string) => boolean {
+  if (!bridgeToken) return () => true;
+  const expected = Buffer.from(bridgeToken);
+  return (candidate) => {
+    const actual = Buffer.from(candidate);
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  };
 }
 
 function parseImageInputs(value: unknown): CodexImageInput[] {
@@ -78,13 +104,26 @@ function parseImageInputs(value: unknown): CodexImageInput[] {
   });
 }
 
-export async function createBridge() {
-  const pairingCode = crypto.randomBytes(4).toString("hex").toUpperCase();
+export async function createBridge(options: BridgeOptions = {}) {
+  const pairingCode = options.pairingCode ?? crypto.randomBytes(4).toString("hex").toUpperCase();
   let pairingAttempts = 0;
   const pairingExpiresAt = Date.now() + 10 * 60 * 1000;
-  const sessions = new SessionStore(config.codexHome);
-  const watcher = new SessionWatcher(config.codexHome, config.scanIntervalMs);
-  const cdp = new CodexCdpController(config.cdpUrl, sessions);
+  const sessions = options.sessions ?? new SessionStore(config.codexHome);
+  const watcher = options.watcher ?? new SessionWatcher(config.codexHome, config.scanIntervalMs);
+  const cdp: BridgeCdp = options.cdp ?? new CodexCdpController(config.cdpUrl, sessions);
+  const tokenMatches = makeTokenMatcher(options.token ?? config.token);
+  const auth: (req: Request, res: Response, next: NextFunction) => void = (req, res, next) => {
+    const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    const queryToken = mayUseQueryToken(req.method, req.path) && typeof req.query.token === "string" ? req.query.token : "";
+    if (!tokenMatches(bearer || queryToken)) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    next();
+  };
+  const port = options.port ?? config.port;
+  const host = options.host ?? config.host;
+  const enablePolling = options.polling ?? true;
   const app = express();
   app.disable("x-powered-by");
   app.use(compression({ threshold: 1_024 }));
@@ -131,6 +170,20 @@ export async function createBridge() {
   app.get("/api/status", async (_req, res) => {
     res.json({ cdp: await cdp.status(), codexHome: config.codexHome, pairing: { available: Boolean(config.external && Date.now() < pairingExpiresAt) } });
   });
+  app.put("/api/mode", async (req, res, next) => {
+    try {
+      const mode: unknown = req.body?.mode;
+      if (!isDesktopMode(mode)) return void res.status(400).json({ error: "Mode must be codex or chatgpt-work" });
+      res.json(await cdp.setDesktopMode(mode));
+    } catch (error) { next(error); }
+  });
+  app.put("/api/reasoning", async (req, res, next) => {
+    try {
+      const effort: unknown = req.body?.effort;
+      if (!isReasoningEffort(effort)) return void res.status(400).json({ error: "Reasoning effort must be low, medium, high, or xhigh" });
+      res.json(await cdp.setReasoningEffort(effort));
+    } catch (error) { next(error); }
+  });
   app.put("/api/permissions", async (req, res, next) => {
     try {
       const mode: unknown = req.body?.mode;
@@ -150,6 +203,14 @@ export async function createBridge() {
       if (!file) return void res.status(404).json({ error: "Thread not found" });
       const timeline = await sessions.getTimelineWithApprovals(req.params.id);
       res.json({ ...timeline, items: deferInlineTimelineImages(timeline.items) });
+    } catch (error) { next(error); }
+  });
+  app.get("/api/threads/:id/environment", async (req, res, next) => {
+    try {
+      const file = await sessions.getThreadFile(req.params.id);
+      if (!file) return void res.status(404).json({ error: "Thread not found" });
+      const info = await sessions.getEnvironmentInfo(req.params.id);
+      res.json(info ?? { git: null, tokenUsage: null, sources: [] });
     } catch (error) { next(error); }
   });
   app.get("/api/media", async (req, res, next) => {
@@ -266,9 +327,9 @@ export async function createBridge() {
     } catch (error) { next(error); }
   });
 
-  const webRoot = process.env.BRIDGE_WEB_ROOT
+  const webRoot = options.webRoot ?? (process.env.BRIDGE_WEB_ROOT
     ? path.resolve(process.env.BRIDGE_WEB_ROOT)
-    : path.resolve(process.cwd(), "dist/web");
+    : path.resolve(process.cwd(), "dist/web"));
   app.use(express.static(webRoot));
   app.get("/*splat", (_req, res) => res.sendFile(path.join(webRoot, "index.html")));
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -277,7 +338,11 @@ export async function createBridge() {
     res.status(badRequest ? 400 : 500).json({ error: badRequest ? error.message : "Internal server error" });
   });
 
-  const server = app.listen(config.port, config.host);
+  const server = app.listen(port, host);
+  await new Promise<void>((resolve, reject) => {
+    server.once("listening", () => resolve());
+    server.once("error", reject);
+  });
   const wss = new WebSocketServer({ noServer: true });
   const websocketLiveness = new WeakMap<WebSocket, boolean>();
   wss.on("connection", (ws) => {
@@ -321,40 +386,70 @@ export async function createBridge() {
   watcher.on("event", (event: BridgeEvent) => {
     broadcast({ type: "session_event", event });
   });
+  let desktopPoll: NodeJS.Timeout | null = null;
   let desktopPollBusy = false;
   let lastDesktopState = "";
-  const desktopPoll = setInterval(async () => {
-    if (desktopPollBusy) return;
-    desktopPollBusy = true;
-    try {
-      const status = await cdp.status();
-      const serialized = JSON.stringify(status);
-      if (serialized !== lastDesktopState) {
-        lastDesktopState = serialized;
-        broadcast({ type: "desktop_state", status });
+  if (enablePolling) {
+    desktopPoll = setInterval(async () => {
+      if (desktopPollBusy) return;
+      desktopPollBusy = true;
+      try {
+        const status = await cdp.status();
+        const serialized = JSON.stringify(status);
+        if (serialized !== lastDesktopState) {
+          lastDesktopState = serialized;
+          broadcast({ type: "desktop_state", status });
+        }
+      } finally {
+        desktopPollBusy = false;
       }
-    } finally {
-      desktopPollBusy = false;
-    }
-  }, 1_000);
-  desktopPoll.unref();
+    }, 1_000);
+    desktopPoll.unref();
+  }
+  let streamPoll: NodeJS.Timeout | null = null;
   let streamPollBusy = false;
   let lastStreamState = "";
-  const streamPoll = setInterval(async () => {
-    if (streamPollBusy) return;
-    streamPollBusy = true;
-    try {
-      const output = await cdp.streamingOutput();
-      const serialized = JSON.stringify(output);
-      if (serialized !== lastStreamState) {
-        lastStreamState = serialized;
-        broadcast({ type: "stream_output", output });
+  if (enablePolling) {
+    streamPoll = setInterval(async () => {
+      if (streamPollBusy) return;
+      streamPollBusy = true;
+      try {
+        const output = await cdp.streamingOutput();
+        const serialized = JSON.stringify(output);
+        if (serialized !== lastStreamState) {
+          lastStreamState = serialized;
+          broadcast({ type: "stream_output", output });
+        }
+      } finally {
+        streamPollBusy = false;
       }
-    } finally {
-      streamPollBusy = false;
-    }
-  }, 250);
-  streamPoll.unref();
+    }, 250);
+    streamPoll.unref();
+  }
+  let envPoll: NodeJS.Timeout | null = null;
+  let envPollBusy = false;
+  let lastEnvState = "";
+  let lastEnvThreadId = "";
+  if (enablePolling) {
+    envPoll = setInterval(async () => {
+      if (envPollBusy) return;
+      envPollBusy = true;
+      try {
+        const status = await cdp.status();
+        const threadId = status.currentThreadId;
+        if (!threadId || threadId.startsWith("client-new-thread:")) { lastEnvThreadId = ""; lastEnvState = ""; return; }
+        if (threadId !== lastEnvThreadId) { lastEnvState = ""; lastEnvThreadId = threadId; }
+        const info = await sessions.getEnvironmentInfo(threadId);
+        const serialized = JSON.stringify(info);
+        if (serialized !== lastEnvState) {
+          lastEnvState = serialized;
+          broadcast({ type: "environment_info", threadId, info });
+        }
+      } catch { /* Environment polling failures are non-fatal. */ }
+      finally { envPollBusy = false; }
+    }, 5_000);
+    envPoll.unref();
+  }
   await watcher.start();
   if (config.external) {
     console.log(serverText(`手机配对码（有效期 10 分钟）：${pairingCode}`, `Phone pairing code (valid for 10 minutes): ${pairingCode}`));
@@ -365,8 +460,9 @@ export async function createBridge() {
     app,
     server,
     close: async () => {
-      clearInterval(desktopPoll);
-      clearInterval(streamPoll);
+      if (desktopPoll) clearInterval(desktopPoll);
+      if (streamPoll) clearInterval(streamPoll);
+      if (envPoll) clearInterval(envPoll);
       clearInterval(websocketHeartbeat);
       watcher.stop();
       for (const client of wss.clients) client.close();
@@ -374,4 +470,3 @@ export async function createBridge() {
     },
   };
 }
-

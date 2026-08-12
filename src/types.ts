@@ -51,3 +51,28 @@ export interface BridgeEvent {
   status?: ThreadStatus;
   rollbackTurns?: number;
 }
+
+export interface GitStatus {
+  branch: string | null;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  ahead: number;
+  behind: number;
+}
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  cacheHitRate: number;
+  totalTokens: number;
+  cost: number | null;
+  model: string | null;
+}
+
+export interface EnvironmentInfo {
+  git: GitStatus | null;
+  tokenUsage: TokenUsage | null;
+  sources: string[];
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCodexPermissionMode, isFollowUpMode, permissionModeFromLabel, selectCurrentStreamingText, selectRecentThreadIds, shouldUseAlternateFollowUpShortcut } from "./controller.js";
+import { isCodexPermissionMode, isDesktopMode, isFollowUpMode, isReasoningEffort, permissionModeFromLabel, selectCurrentStreamingText, selectRecentThreadIds, shouldUseAlternateFollowUpShortcut } from "./controller.js";
 
 describe("permissionModeFromLabel", () => {
   it.each([
@@ -24,6 +24,22 @@ describe("isCodexPermissionMode", () => {
     expect(["ask", "auto", "full-access"].every(isCodexPermissionMode)).toBe(true);
     expect(isCodexPermissionMode("custom")).toBe(false);
     expect(isCodexPermissionMode(null)).toBe(false);
+  });
+});
+
+describe("isDesktopMode", () => {
+  it("accepts only supported Desktop modes", () => {
+    expect(["codex", "chatgpt-work"].every(isDesktopMode)).toBe(true);
+    expect(isDesktopMode("chatgpt")).toBe(false);
+    expect(isDesktopMode(null)).toBe(false);
+  });
+});
+
+describe("isReasoningEffort", () => {
+  it("accepts only supported reasoning efforts", () => {
+    expect(["low", "medium", "high", "xhigh"].every(isReasoningEffort)).toBe(true);
+    expect(isReasoningEffort("max")).toBe(false);
+    expect(isReasoningEffort(null)).toBe(false);
   });
 });
 
