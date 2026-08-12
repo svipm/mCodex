@@ -86,7 +86,7 @@ function Build-SourceRelease {
   )) {
     Copy-Item -LiteralPath (Join-Path $Root $file) -Destination $stage
   }
-  foreach ($directory in @(".github", "readme", "scripts", "src", "web")) {
+  foreach ($directory in @(".github", "docs", "readme", "scripts", "src", "web")) {
     Copy-Item -LiteralPath (Join-Path $Root $directory) -Destination $stage -Recurse
   }
 
