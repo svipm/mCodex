@@ -197,6 +197,11 @@ function Build-SeaRelease {
     "--overwrite"
   )
 
+  & $exePath --self-test
+  if ($LASTEXITCODE -ne 0) {
+    throw "SEA self-test failed with exit code $LASTEXITCODE"
+  }
+
   $hash = Get-Sha256 $exePath
   "$hash  $([IO.Path]::GetFileName($exePath))" |
     Set-Content -LiteralPath "$exePath.sha256" -Encoding ascii
