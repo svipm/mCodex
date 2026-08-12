@@ -16,6 +16,7 @@
 - 新增发布检查清单 `docs/RELEASING.md` 与 `npm run check`
 - 修复空状态新建任务 Composer 尺寸过窄的问题
 - 空状态新建任务支持图片预览与携带图片发送
+- 状态栏显示当前 Codex 模型名与推理强度
 
 ### Changed
 

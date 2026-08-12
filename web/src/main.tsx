@@ -18,7 +18,7 @@ type PermissionMode = "ask" | "auto" | "full-access";
 type DesktopMode = "codex" | "chatgpt-work";
 type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 interface DesktopPermission { mode: PermissionMode | null; label: string | null; available: boolean }
-interface DesktopState { connected?: boolean; editorReady?: boolean; currentThreadId?: string | null; runningThreadIds?: string[]; approval?: Approval | null; permissions?: DesktopPermission; mode?: DesktopMode | null; reasoningEffort?: ReasoningEffort | null }
+interface DesktopState { connected?: boolean; editorReady?: boolean; currentThreadId?: string | null; runningThreadIds?: string[]; approval?: Approval | null; permissions?: DesktopPermission; mode?: DesktopMode | null; reasoningEffort?: ReasoningEffort | null; model?: string | null }
 type FollowUpMode = "queue" | "steer" | "interrupt";
 interface PendingImage { id: string; file: File; preview: string }
 interface PairingInfo { available: boolean; expiresAt: number; pairingCode: string; urls: string[] }
@@ -365,6 +365,7 @@ function App() {
   const [desktopPermissions, setDesktopPermissions] = useState<DesktopPermission>({ mode: null, label: null, available: false });
   const [desktopMode, setDesktopMode] = useState<DesktopMode | null>(null);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | null>(null);
+  const [desktopModel, setDesktopModel] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"task" | "project" | "permissions" | "follow-up" | null>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [followUpSubmitting, setFollowUpSubmitting] = useState<FollowUpMode | null>(null);
@@ -465,6 +466,7 @@ function App() {
       setDesktopPermissions(cdp?.permissions ?? { mode: null, label: null, available: false });
       setDesktopMode(cdp?.mode ?? null);
       setReasoningEffort(cdp?.reasoningEffort ?? null);
+      setDesktopModel(cdp?.model ?? null);
       setNeedsPairing(false);
       setError("");
     } catch (cause) {
@@ -583,6 +585,7 @@ function App() {
         setDesktopPermissions(data.status?.permissions ?? { mode: null, label: null, available: false });
         setDesktopMode(data.status?.mode ?? null);
         setReasoningEffort(data.status?.reasoningEffort ?? null);
+        setDesktopModel(data.status?.model ?? null);
         return;
       }
       if (data.type === "stream_output") {
@@ -965,7 +968,7 @@ function App() {
           {liveOutput && <article className="assistant-message markdown-body streaming-message"><MarkdownText text={liveOutput} /><span className="stream-caret" aria-hidden="true" /></article>}
         </div>
         {error && <div className="error-bar"><CircleAlert size={16} />{error}</div>}
-        <StatusBar tokens={envInfo?.tokenUsage ?? null} model={null} reasoningEffort={reasoningEffort} threadTitle={selectedThread.title} running={isActivelyRunning(selectedThread, desktopThreadId)} />
+        <StatusBar tokens={envInfo?.tokenUsage ?? null} model={desktopModel} reasoningEffort={reasoningEffort} threadTitle={selectedThread.title} running={isActivelyRunning(selectedThread, desktopThreadId)} />
         <footer className="composer">
                   <div className="composer-toolbar">
           <select className="composer-control composer-project" value={newTaskProjectId || (selected ? projectForThread.get(selected) ?? "" : "")} onChange={(event) => setNewTaskProjectId(event.target.value)} aria-label={t("项目")} disabled={dialogBusy}>

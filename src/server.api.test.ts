@@ -31,6 +31,7 @@ function fakeCdp(overrides: Partial<BridgeCdp> = {}): BridgeCdp {
     permissions: { mode: null, label: null, available: false },
     mode: null,
     reasoningEffort: null,
+    model: "test-model",
   };
   return {
     status: vi.fn(async () => offlineStatus),
@@ -203,7 +204,7 @@ describe("createBridge API integration", () => {
 
     const status = await fetch(`${baseUrl}/api/status`);
     expect(status.status).toBe(200);
-    expect(await status.json()).toMatchObject({ cdp: { connected: false, mode: null } });
+    expect(await status.json()).toMatchObject({ cdp: { connected: false, mode: null, model: "test-model" } });
   });
 
   it("serves timelines and returns 404 for unknown threads", async () => {

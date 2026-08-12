@@ -14,6 +14,7 @@ export interface CdpStatus {
   permissions: CodexPermissionState;
   mode: DesktopMode | null;
   reasoningEffort: ReasoningEffort | null;
+  model: string | null;
   error?: string;
 }
 
@@ -183,7 +184,8 @@ export class CodexCdpController {
   private async mainPage(): Promise<Page> {
     const browser = await this.connect();
     const pages = browser.contexts().flatMap((context) => context.pages());
-    const page = pages.find((candidate) => candidate.url() === "app://-/index.html");
+    const page = pages.find((candidate) => candidate.url().startsWith("app://-/index.html?initialRoute=%2Flocal%2F"))
+      ?? pages.find((candidate) => candidate.url() === "app://-/index.html");
     if (!page) throw new Error("Codex main page was not found on the CDP endpoint");
     return page;
   }
@@ -214,7 +216,7 @@ export class CodexCdpController {
   private async readStatus(): Promise<CdpStatus> {
     try {
       const page = await this.mainPage();
-      const [currentThreadId, stopReady, runningRows, editorReady, approval, permissions, mode, reasoningEffort] = await Promise.all([
+      const [currentThreadId, stopReady, runningRows, editorReady, approval, permissions, mode, reasoningEffort, model] = await Promise.all([
         this.currentThreadId(page),
         this.stopButton(page).count().then((count) => count > 0),
         page.evaluate(() => Array.from(document.querySelectorAll("[data-app-action-sidebar-thread-id]"))
@@ -229,6 +231,7 @@ export class CodexCdpController {
         this.permissionStateFromPage(page),
         this.desktopModeFromPage(page),
         this.reasoningEffortFromPage(page),
+        this.modelFromPage(page),
       ]);
       const threads = runningRows.some((row) => row.id.startsWith("client-new-thread:"))
         ? await this.sessions.listThreads()
@@ -249,6 +252,7 @@ export class CodexCdpController {
         permissions,
         mode,
         reasoningEffort,
+        model,
       };
     } catch (error) {
       return {
@@ -261,6 +265,7 @@ export class CodexCdpController {
         permissions: { mode: null, label: null, available: false },
         mode: null,
         reasoningEffort: null,
+        model: null,
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -436,6 +441,14 @@ export class CodexCdpController {
     if (await trigger.count() !== 1) return null;
     const effort = await trigger.getAttribute("data-selected-reasoning-effort");
     return isReasoningEffort(effort) ? effort : null;
+  }
+
+  private async modelFromPage(page: Page): Promise<string | null> {
+    const trigger = this.reasoningTrigger(page);
+    if (await trigger.count() !== 1) return null;
+    const text = (await trigger.textContent()) ?? "";
+    const model = text.replace(/\s*(?:极高|高|中|低|X-High|High|Medium|Light)\s*$/i, "").trim();
+    return model || null;
   }
 
   async setDesktopMode(mode: DesktopMode): Promise<{ mode: DesktopMode | null }> {
